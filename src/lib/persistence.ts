@@ -1,5 +1,6 @@
 import { useStudio, type Photo, type Adjustment, type Layout } from "./store";
 import { fromBlob } from "./images";
+import { DEFAULT_TEMPLATE_ID } from "../templates";
 type StoredPhoto = {
   id: string;
   blob: Blob;
@@ -8,6 +9,7 @@ type StoredPhoto = {
 };
 type Draft = {
   version: 1;
+  templateSetVersion?: 2;
   selfie: StoredPhoto | null;
   products: StoredPhoto[];
   template: string;
@@ -109,7 +111,10 @@ export function initializePhotoStorage(): Promise<void> {
           useStudio.setState({
             selfie,
             products,
-            template: draft.template,
+            template:
+              draft.templateSetVersion === 2
+                ? draft.template
+                : DEFAULT_TEMPLATE_ID,
             layout: draft.layout,
             savedPoster: draft.poster instanceof Blob ? draft.poster : null,
             step: selfie ? (products.length ? "edit" : "product") : "selfie",
@@ -140,6 +145,7 @@ export function initializePhotoStorage(): Promise<void> {
         return;
       const draft: Draft = {
         version: 1,
+        templateSetVersion: 2,
         selfie: photo(state.selfie),
         products: state.products.map((p) => photo(p)!),
         template: state.template,

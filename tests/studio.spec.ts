@@ -89,7 +89,7 @@ test("rear camera appears in the small product box, then captures and shares", a
           Array.from(
             (c as HTMLCanvasElement)
               .getContext("2d")!
-              .getImageData(335, 760, 1, 1).data,
+              .getImageData(270, 670, 1, 1).data,
           ).slice(0, 3),
         ),
     )

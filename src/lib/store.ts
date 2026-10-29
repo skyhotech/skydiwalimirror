@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { DEFAULT_TEMPLATE_ID } from "../templates";
 export type Step =
   "welcome" | "selfie" | "selfieReview" | "product" | "edit" | "result";
 export type Adjustment = { x: number; y: number; zoom: number };
@@ -38,7 +39,7 @@ function release(p: Photo | null) {
 }
 export const useStudio = create<State>((set, get) => ({
   step: "selfie",
-  template: "golden",
+  template: DEFAULT_TEMPLATE_ID,
   selfie: null,
   products: [],
   logo: null,

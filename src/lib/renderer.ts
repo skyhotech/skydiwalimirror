@@ -80,7 +80,19 @@ export type Composition = {
 // Mirror contours are calibrated to the two supplied 900 × 1600 posters.
 function mirrorPath(ctx: CanvasRenderingContext2D, t: Template) {
   ctx.beginPath();
-  if (t.id === "golden") {
+  if (t.id === "dream") {
+    ctx.moveTo(236, 1115);
+    ctx.lineTo(236, 730);
+    ctx.lineTo(184, 730);
+    ctx.lineTo(184, 350);
+    ctx.quadraticCurveTo(184, 230, 330, 165);
+    ctx.quadraticCurveTo(540, 120, 750, 165);
+    ctx.quadraticCurveTo(896, 230, 896, 350);
+    ctx.lineTo(896, 730);
+    ctx.lineTo(833, 730);
+    ctx.lineTo(833, 1115);
+    ctx.closePath();
+  } else if (t.id === "golden") {
     ctx.moveTo(128, 1330);
     ctx.lineTo(128, 280);
     ctx.quadraticCurveTo(128, 120, 305, 115);
@@ -126,7 +138,12 @@ function artworkOverlay(t: Template, image: HTMLImageElement) {
         t.id === "golden"
           ? ((x - 94) / 65) ** 2 + ((y - 431) / 49) ** 2 < 1
           : ((x - 110) / 60) ** 2 + ((y - 568) / 43) ** 2 < 1;
-      if (logo || cameraBadge) continue;
+      const lantern =
+        t.id === "dream" &&
+        [270, 804].some(
+          (cx) => ((x - cx) / 48) ** 2 + ((y - 289) / 85) ** 2 < 1,
+        );
+      if (logo || (t.id !== "dream" && cameraBadge) || lantern) continue;
       const r = pixels.data[i],
         g = pixels.data[i + 1],
         b = pixels.data[i + 2],
@@ -136,7 +153,7 @@ function artworkOverlay(t: Template, image: HTMLImageElement) {
       // Gray mirror pixels become transparent; warm frame lights and gold stay in front.
       const removal =
         Math.max(0, Math.min(1, (0.32 - saturation) / 0.09)) *
-        Math.max(0, Math.min(1, (220 - max) / 20)) *
+        (t.id === "dream" ? 1 : Math.max(0, Math.min(1, (220 - max) / 20))) *
         Math.max(0, Math.min(1, (min - 35) / 20));
       pixels.data[i + 3] = Math.round(
         255 * (1 - (removal * clip[i + 3]) / 255),

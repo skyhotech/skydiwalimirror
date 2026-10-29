@@ -18,7 +18,26 @@ export type Template = {
   artwork: string;
 };
 // Coordinates use the shared 1080 × 1920 export design space.
+export const DEFAULT_TEMPLATE_ID = "dream";
 export const templates: Template[] = [
+  {
+    id: "dream",
+    name: "Dream Diwali",
+    subtitle: "Your SKY Dream Diwali frame",
+    bg: "#f7e7cc",
+    ink: "#3c2418",
+    gold: "#d6a447",
+    accent: "#d22856",
+    light: true,
+    arch: true,
+    selfie: { x: 184, y: 165, w: 712, h: 950 },
+    product: { x: 337, y: 1215, w: 405, h: 245 },
+    logo: { x: 0, y: 0, w: 0, h: 0 },
+    heading: { x: 0, y: 0 },
+    animation: "quiet",
+    fit: "cover",
+    artwork: "frames/0.jpeg",
+  },
   {
     id: "golden",
     name: "Golden Mirror",
