@@ -1,0 +1,8 @@
+node_modules/
+dist/
+public/ai/*
+!public/ai/.gitkeep
+test-results/
+playwright-report/
+*.tsbuildinfo
+.DS_Store

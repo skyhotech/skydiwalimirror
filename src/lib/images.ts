@@ -1,0 +1,93 @@
+import { initialAdjustment, type Photo } from "./store";
+export async function fromBlob(blob: Blob): Promise<Photo> {
+  const url = URL.createObjectURL(blob);
+  const image = new Image();
+  try {
+    image.src = url;
+    await image.decode();
+    return {
+      id: crypto.randomUUID(),
+      image,
+      blob,
+      url,
+      adjust: initialAdjustment(),
+      label: "",
+    };
+  } catch {
+    URL.revokeObjectURL(url);
+    throw new Error(
+      "This image could not be opened. Choose a JPG, PNG or WebP image.",
+    );
+  }
+}
+export async function readPhoto(file: File): Promise<Photo> {
+  if (!["image/jpeg", "image/png", "image/webp"].includes(file.type))
+    throw new Error("Choose a JPG, PNG or WebP image.");
+  if (file.size > 25 * 1024 * 1024)
+    throw new Error("Please choose an image smaller than 25 MB.");
+  const photo = await fromBlob(file);
+  if (photo.image.width * photo.image.height > 60_000_000) {
+    URL.revokeObjectURL(photo.url);
+    throw new Error("Image is too large. Please choose a smaller photo.");
+  }
+  const scale = Math.min(
+    1,
+    2200 / Math.max(photo.image.width, photo.image.height),
+  );
+  if (scale === 1) return photo;
+  const c = document.createElement("canvas");
+  c.width = Math.round(photo.image.width * scale);
+  c.height = Math.round(photo.image.height * scale);
+  c.getContext("2d")!.drawImage(photo.image, 0, 0, c.width, c.height);
+  const blob = await canvasBlob(c);
+  URL.revokeObjectURL(photo.url);
+  return fromBlob(blob);
+}
+export function canvasBlob(
+  canvas: HTMLCanvasElement,
+  type = "image/png",
+  quality = 0.95,
+): Promise<Blob> {
+  return new Promise((resolve, reject) => {
+    try {
+      canvas.toBlob(
+        (b) =>
+          b
+            ? resolve(b)
+            : reject(
+                new Error("Could not export. Try the standard resolution."),
+              ),
+        type,
+        quality,
+      );
+    } catch {
+      reject(new Error("Export failed. Try again with a smaller image."));
+    }
+  });
+}
+export async function capture(
+  video: HTMLVideoElement,
+  mirror: boolean,
+): Promise<Photo> {
+  if (video.readyState < 2 || !video.videoWidth)
+    throw new Error("Camera is still starting. Please try again.");
+  const c = document.createElement("canvas"),
+    scale = Math.min(1, 2200 / Math.max(video.videoWidth, video.videoHeight));
+  c.width = Math.round(video.videoWidth * scale);
+  c.height = Math.round(video.videoHeight * scale);
+  const ctx = c.getContext("2d")!;
+  if (mirror) {
+    ctx.translate(c.width, 0);
+    ctx.scale(-1, 1);
+  }
+  ctx.drawImage(video, 0, 0, c.width, c.height);
+  return fromBlob(await canvasBlob(c, "image/jpeg"));
+}
+export function download(blob: Blob, name: string) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = name;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 15000);
+}
