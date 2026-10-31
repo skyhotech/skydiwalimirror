@@ -5,7 +5,11 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createConnection } from "node:net";
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
-const python = join(root, "backend/.venv/bin/python");
+// macOS/Linux and Windows put the venv's Python in different places.
+const python = [
+  join(root, "backend/.venv/bin/python"),
+  join(root, "backend/.venv/Scripts/python.exe"),
+].find((p) => existsSync(p));
 const children = [];
 const run = (cmd, args, opts = {}) => {
   const child = spawn(cmd, args, { stdio: "inherit", cwd: root, ...opts });
@@ -28,7 +32,7 @@ const portBusy = await new Promise((resolve) => {
   s.on("error", () => resolve(false));
 });
 if (portBusy) console.log("Backend already running on :8000");
-else if (existsSync(python))
+else if (python)
   run(python, ["manage.py", "runserver", "127.0.0.1:8000"], {
     cwd: join(root, "backend"),
   });
@@ -36,8 +40,10 @@ else
   console.warn(
     "backend/.venv missing — studio runs with built-in frames only. See README › Backend.",
   );
-run(join(root, "node_modules/.bin/vite"), [
-  "--host",
-  "0.0.0.0",
-  ...process.argv.slice(2),
-]);
+// On Windows the npm bin shim is vite.cmd, which needs a shell to run.
+const windows = process.platform === "win32";
+run(
+  join(root, "node_modules/.bin", windows ? "vite.cmd" : "vite"),
+  ["--host", "0.0.0.0", ...process.argv.slice(2)],
+  { shell: windows },
+);
