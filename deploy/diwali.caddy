@@ -29,7 +29,7 @@ diwali.skymobile.in {
 		file_server
 	}
 	handle_path /media/* {
-		root * D:/sky/diwali/backend/media
+		root * D:/sky/diwali/media
 		file_server
 	}
 	handle {
