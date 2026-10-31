@@ -1,8 +1,14 @@
 import { replaceTemplates, type Template } from "../templates";
 
 // Same-origin by default (Vite proxies /api in dev); set VITE_API_URL otherwise.
+// The Vercel-hosted studio talks to the VPS API (a public URL, not a secret).
+const VPS_API = "https://222.167.207.123";
+const onVercel =
+  typeof location !== "undefined" && location.hostname.endsWith(".vercel.app");
 /** Backend origin; empty when the studio and API share one site. */
-export const API_ORIGIN = (import.meta.env.VITE_API_URL ?? "").replace(
+export const API_ORIGIN = (
+  import.meta.env.VITE_API_URL ?? (onVercel ? VPS_API : "")
+).replace(
   /\/$/,
   "",
 );
