@@ -7,7 +7,7 @@ $Caddy = 'D:\sky\caddy\bin-2.11.7\caddy.exe'
 $Winsw = "$Root\service\Sky-diwali.exe"
 $Conf = 'D:\sky\caddy\Caddyfile'
 function Run($exe) {
-  & cmd /c "`"$exe`" $($args -join ' ') 2>&1"
+  & $exe @args 2>&1 | ForEach-Object { "$_" }
   if ($LASTEXITCODE -ne 0) { throw "failed: $exe $args" }
 }
 function Copy-Tree($from, $to) {
@@ -16,8 +16,8 @@ function Copy-Tree($from, $to) {
 }
 try {
   Set-Location $Repo
-  Run npm ci
-  Run npm run build
+  Run npm.cmd ci
+  Run npm.cmd run build
 
   if (-not (Test-Path $Py)) { Run C:\python\python.exe -m venv "$Root\venv" }
   Run $Py -m pip install -q -r backend\requirements.txt
