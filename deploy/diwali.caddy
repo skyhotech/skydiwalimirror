@@ -1,6 +1,6 @@
 # SKY Diwali Selfie Studio: built frontend plus Django (Sky-diwali on 127.0.0.1:8003).
 # Source of truth is deploy/diwali.caddy in skydiwalimirror; deployments overwrite the server copy.
-diwali.skymobile.in {
+diwali.skymobile.in, dreamdiwali.skymobile.in {
 	encode zstd gzip
 	header {
 		Strict-Transport-Security "max-age=31536000; includeSubDomains"
