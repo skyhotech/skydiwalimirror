@@ -12,18 +12,34 @@ import {
   SlidersHorizontal,
   Copy,
   ExternalLink,
+  UserPlus,
 } from "lucide-react";
 import { motion } from "motion/react";
 import { useStudio, type Photo } from "../lib/store";
 import { getTemplate, templates } from "../templates";
-import { renderPoster } from "../lib/renderer";
+import {
+  instagramReady,
+  renderInstagramPost,
+  POST_HEIGHT,
+} from "../lib/instagram";
 import { canvasBlob, download } from "../lib/images";
 import { Poster } from "./Poster";
+import { SpinWheel } from "./SpinWheel";
+import { spinPrize } from "../lib/backend";
+import { faceFingerprint } from "../lib/faceMatch";
 import { Templates } from "./Templates";
 import { frameAsset, subscribeFrames } from "../lib/frameAssets";
 import { instagramCaption, copyCaption } from "../lib/sharing";
+// Kiosk mode: customers only pick a frame and post. Flip to true to bring
+// back photo adjustments, layout, format, caption and the generate flow.
+const SHOW_EDIT_CONTROLS = false;
 export default function Editor() {
   const s = useStudio();
+  // A reload between the product photo and claiming the prize lands here;
+  // reopen the wheel (it lands on the already-locked prize, if any).
+  const [wheelOpen, setWheelOpen] = useState(
+    () => s.products.length > 0 && !s.reward,
+  );
   const [selected, setSelected] = useState("selfie"),
     [busy, setBusy] = useState(false),
     [error, setError] = useState(""),
@@ -53,18 +69,20 @@ export default function Editor() {
       void (async () => {
         try {
           const c = document.createElement("canvas");
+          await instagramReady();
           c.width = 1080 * scale;
-          c.height = 1920 * scale;
+          c.height = POST_HEIGHT * scale;
           const ctx = c.getContext("2d");
           if (!ctx)
             throw new Error("Not enough memory to prepare your poster.");
           ctx.scale(scale, scale);
-          renderPoster(ctx, {
+          renderInstagramPost(ctx, {
             template: getTemplate(s.template),
             selfie: s.selfie,
             products: s.products,
             logo: s.logo,
             layout: s.layout,
+            reward: s.reward,
           });
           const output = await canvasBlob(c, format);
           c.width = c.height = 1;
@@ -82,6 +100,8 @@ export default function Editor() {
     s.selfie,
     s.products,
     s.template,
+    s.catalog,
+    s.reward,
     s.layout,
     s.logo,
     scale,
@@ -108,6 +128,7 @@ export default function Editor() {
     products: s.products,
     logo: s.logo,
     layout: s.layout,
+    reward: s.reward,
   };
   async function generate() {
     setBusy(true);
@@ -119,12 +140,13 @@ export default function Editor() {
         );
       await new Promise((r) => setTimeout(r, 40));
       const c = document.createElement("canvas");
+      await instagramReady();
       c.width = 1080 * scale;
-      c.height = 1920 * scale;
+      c.height = POST_HEIGHT * scale;
       const ctx = c.getContext("2d");
       if (!ctx) throw new Error("Not enough memory. Try standard resolution.");
       ctx.scale(scale, scale);
-      renderPoster(ctx, state);
+      renderInstagramPost(ctx, state);
       const generated = await canvasBlob(c, format);
       setBlob(generated);
       s.setSavedPoster(generated);
@@ -242,6 +264,17 @@ export default function Editor() {
   }
   return (
     <div className="workspace editor-workspace">
+      {wheelOpen && (
+        <SpinWheel
+          getPrize={async () =>
+            spinPrize(s.phone ?? "", await faceFingerprint(s.selfie?.image))
+          }
+          onClaim={(r) => {
+            s.setReward(r.id);
+            setWheelOpen(false);
+          }}
+        />
+      )}
       <div className="studio-panel">
         <div className="panel-heading">
           <span className="eyebrow">
@@ -321,7 +354,7 @@ export default function Editor() {
             drag.current = null;
           }}
         >
-          <Poster state={state} />
+          <Poster chrome state={state} />
           <button
             className="instagram-post-button poster-post-action"
             aria-label="Post on Instagram"
@@ -346,7 +379,11 @@ export default function Editor() {
         </motion.div>
         <div className="under-preview">
           <span>
-            <Check size={14} /> {scale === 2 ? "2160 × 3840" : "1080 × 1920"} px
+            <Check size={14} />{" "}
+            {scale === 2
+              ? `2160 × ${POST_HEIGHT * 2}`
+              : `1080 × ${POST_HEIGHT}`}{" "}
+            px
           </span>
           <span>Processed on your device</span>
         </div>
@@ -397,183 +434,195 @@ export default function Editor() {
         ) : (
           <>
             <Templates />
-            <div className="editor-section">
-              <h3>
-                <SlidersHorizontal size={17} /> Photo adjustments
-              </h3>
-              <div className="photo-select">
-                <button
-                  className={selected === "selfie" ? "active" : ""}
-                  onClick={() => setSelected("selfie")}
-                >
-                  Selfie
-                </button>
-                {s.products.map((p, i) => (
-                  <button
-                    key={p.id}
-                    className={selected === p.id ? "active" : ""}
-                    onClick={() => setSelected(p.id)}
-                  >
-                    Product {i + 1}
-                  </button>
-                ))}
-              </div>
-              {photo && (
-                <>
-                  <label className="range-label">
-                    Zoom <span>{photo.adjust.zoom.toFixed(1)}×</span>
-                    <input
-                      type="range"
-                      min="0.5"
-                      max="3"
-                      step="0.05"
-                      value={photo.adjust.zoom}
-                      onChange={(e) => adjust("zoom", +e.target.value)}
-                    />
-                  </label>
-                  <div className="range-pair">
-                    <label className="range-label">
-                      Horizontal
-                      <input
-                        type="range"
-                        min="-1"
-                        max="1"
-                        step=".01"
-                        value={photo.adjust.x}
-                        onChange={(e) => adjust("x", +e.target.value)}
-                      />
-                    </label>
-                    <label className="range-label">
-                      Vertical
-                      <input
-                        type="range"
-                        min="-1"
-                        max="1"
-                        step=".01"
-                        value={photo.adjust.y}
-                        onChange={(e) => adjust("y", +e.target.value)}
-                      />
-                    </label>
+            <button className="text-button next-customer" onClick={s.reset}>
+              <UserPlus size={15} /> Next customer
+            </button>
+            {SHOW_EDIT_CONTROLS && (
+              <>
+                <div className="editor-section">
+                  <h3>
+                    <SlidersHorizontal size={17} /> Photo adjustments
+                  </h3>
+                  <div className="photo-select">
+                    <button
+                      className={selected === "selfie" ? "active" : ""}
+                      onClick={() => setSelected("selfie")}
+                    >
+                      Selfie
+                    </button>
+                    {s.products.map((p, i) => (
+                      <button
+                        key={p.id}
+                        className={selected === p.id ? "active" : ""}
+                        onClick={() => setSelected(p.id)}
+                      >
+                        Product {i + 1}
+                      </button>
+                    ))}
                   </div>
-                  {selected !== "selfie" && (
-                    <label className="field-label">
-                      Product caption (optional)
-                      <input
-                        className="text-input"
-                        maxLength={36}
-                        value={photo.label}
-                        placeholder="A little something new"
-                        onChange={(e) => s.setLabel(photo.id, e.target.value)}
-                      />
-                    </label>
+                  {photo && (
+                    <>
+                      <label className="range-label">
+                        Zoom <span>{photo.adjust.zoom.toFixed(1)}×</span>
+                        <input
+                          type="range"
+                          min="0.5"
+                          max="3"
+                          step="0.05"
+                          value={photo.adjust.zoom}
+                          onChange={(e) => adjust("zoom", +e.target.value)}
+                        />
+                      </label>
+                      <div className="range-pair">
+                        <label className="range-label">
+                          Horizontal
+                          <input
+                            type="range"
+                            min="-1"
+                            max="1"
+                            step=".01"
+                            value={photo.adjust.x}
+                            onChange={(e) => adjust("x", +e.target.value)}
+                          />
+                        </label>
+                        <label className="range-label">
+                          Vertical
+                          <input
+                            type="range"
+                            min="-1"
+                            max="1"
+                            step=".01"
+                            value={photo.adjust.y}
+                            onChange={(e) => adjust("y", +e.target.value)}
+                          />
+                        </label>
+                      </div>
+                      {selected !== "selfie" && (
+                        <label className="field-label">
+                          Product caption (optional)
+                          <input
+                            className="text-input"
+                            maxLength={36}
+                            value={photo.label}
+                            placeholder="A little something new"
+                            onChange={(e) =>
+                              s.setLabel(photo.id, e.target.value)
+                            }
+                          />
+                        </label>
+                      )}
+                      <button
+                        className="text-button small"
+                        onClick={() =>
+                          s.updatePhoto(photo.id, { x: 0, y: 0, zoom: 1 })
+                        }
+                      >
+                        <RotateCcw size={13} /> Reset position
+                      </button>
+                    </>
                   )}
+                </div>
+                <div className="editor-section">
+                  <h3>Product presentation</h3>
+                  <div className="segmented">
+                    {(["card", "spotlight", "gallery"] as const).map((l) => (
+                      <button
+                        key={l}
+                        className={s.layout === l ? "active" : ""}
+                        onClick={() => s.setLayout(l)}
+                      >
+                        {l === "card"
+                          ? "Photo card"
+                          : l === "spotlight"
+                            ? "Spotlight"
+                            : "Gallery"}
+                      </button>
+                    ))}
+                  </div>
+                  <p className="small muted">
+                    All {s.products.length} product photos stay in your poster.
+                    Pinch to zoom on touch screens.
+                  </p>
+                </div>
+                <div className="export-settings">
+                  <label>
+                    Format
+                    <select
+                      value={format}
+                      onChange={(e) => setFormat(e.target.value)}
+                    >
+                      <option value="image/png">PNG · highest quality</option>
+                      <option value="image/jpeg">JPEG · smaller file</option>
+                    </select>
+                  </label>
+                  <label>
+                    Resolution
+                    <select
+                      value={scale}
+                      onChange={(e) => setScale(+e.target.value)}
+                    >
+                      <option value={1}>1080 × {POST_HEIGHT}</option>
+                      <option value={2}>2160 × {POST_HEIGHT * 2} · 2×</option>
+                    </select>
+                  </label>
+                </div>
+                {captionPanel}
+                <p role="status" className="notice">
+                  {notice}
+                </p>
+                <button
+                  className="secondary wide"
+                  onClick={() => void generate()}
+                  disabled={busy}
+                >
+                  {busy ? "Creating your poster…" : "Generate my poster"}
+                  <ArrowRight size={18} />
+                </button>
+                <div className="result-links">
                   <button
                     className="text-button small"
-                    onClick={() =>
-                      s.updatePhoto(photo.id, { x: 0, y: 0, zoom: 1 })
-                    }
+                    onClick={() => s.setStep("selfie")}
                   >
-                    <RotateCcw size={13} /> Reset position
+                    <Camera size={14} /> Retake selfie
                   </button>
-                </>
-              )}
-            </div>
-            <div className="editor-section">
-              <h3>Product presentation</h3>
-              <div className="segmented">
-                {(["card", "spotlight", "gallery"] as const).map((l) => (
                   <button
-                    key={l}
-                    className={s.layout === l ? "active" : ""}
-                    onClick={() => s.setLayout(l)}
+                    className="text-button small"
+                    onClick={() => s.setStep("product")}
                   >
-                    {l === "card"
-                      ? "Photo card"
-                      : l === "spotlight"
-                        ? "Spotlight"
-                        : "Gallery"}
+                    <Camera size={14} /> Edit purchases
                   </button>
-                ))}
-              </div>
-              <p className="small muted">
-                All {s.products.length} product photos stay in your poster.
-                Pinch to zoom on touch screens.
-              </p>
-            </div>
-            <div className="export-settings">
-              <label>
-                Format
-                <select
-                  value={format}
-                  onChange={(e) => setFormat(e.target.value)}
-                >
-                  <option value="image/png">PNG · highest quality</option>
-                  <option value="image/jpeg">JPEG · smaller file</option>
-                </select>
-              </label>
-              <label>
-                Resolution
-                <select
-                  value={scale}
-                  onChange={(e) => setScale(+e.target.value)}
-                >
-                  <option value={1}>1080 × 1920</option>
-                  <option value={2}>2160 × 3840 · 2×</option>
-                </select>
-              </label>
-            </div>
-            {captionPanel}
-            <p role="status" className="notice">
-              {notice}
-            </p>
-            <button
-              className="secondary wide"
-              onClick={() => void generate()}
-              disabled={busy}
-            >
-              {busy ? "Creating your poster…" : "Generate my poster"}
-              <ArrowRight size={18} />
-            </button>
-            <div className="result-links">
-              <button
-                className="text-button small"
-                onClick={() => s.setStep("selfie")}
-              >
-                <Camera size={14} /> Retake selfie
-              </button>
-              <button
-                className="text-button small"
-                onClick={() => s.setStep("product")}
-              >
-                <Camera size={14} /> Edit purchases
-              </button>
-            </div>
+                </div>
+              </>
+            )}
             <p className="error" role="alert">
               {error}
             </p>
-            <div className="template-keyboard">
-              <button
-                onClick={() => {
-                  const i = templates.findIndex((t) => t.id === s.template);
-                  s.setTemplate(
-                    templates[(i + templates.length - 1) % templates.length].id,
-                  );
-                }}
-                aria-label="Previous poster template"
-              >
-                ←
-              </button>
-              <span>Explore another frame</span>
-              <button
-                onClick={() => {
-                  const i = templates.findIndex((t) => t.id === s.template);
-                  s.setTemplate(templates[(i + 1) % templates.length].id);
-                }}
-                aria-label="Next poster template"
-              >
-                →
-              </button>
-            </div>
+            {SHOW_EDIT_CONTROLS && (
+              <div className="template-keyboard">
+                <button
+                  onClick={() => {
+                    const i = templates.findIndex((t) => t.id === s.template);
+                    s.setTemplate(
+                      templates[(i + templates.length - 1) % templates.length]
+                        .id,
+                    );
+                  }}
+                  aria-label="Previous poster template"
+                >
+                  ←
+                </button>
+                <span>Explore another frame</span>
+                <button
+                  onClick={() => {
+                    const i = templates.findIndex((t) => t.id === s.template);
+                    s.setTemplate(templates[(i + 1) % templates.length].id);
+                  }}
+                  aria-label="Next poster template"
+                >
+                  →
+                </button>
+              </div>
+            )}
           </>
         )}
       </aside>

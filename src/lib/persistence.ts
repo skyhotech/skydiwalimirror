@@ -15,6 +15,7 @@ type Draft = {
   template: string;
   layout: Layout;
   poster: Blob | null;
+  reward?: string | null;
 };
 const DB = "sky-private-photos",
   KEY = "latest-draft";
@@ -117,6 +118,7 @@ export function initializePhotoStorage(): Promise<void> {
                 : DEFAULT_TEMPLATE_ID,
             layout: draft.layout,
             savedPoster: draft.poster instanceof Blob ? draft.poster : null,
+            reward: draft.reward ?? null,
             step: selfie ? (products.length ? "edit" : "product") : "selfie",
           });
         } catch {
@@ -140,7 +142,8 @@ export function initializePhotoStorage(): Promise<void> {
         state.products === previous.products &&
         state.template === previous.template &&
         state.layout === previous.layout &&
-        state.savedPoster === previous.savedPoster
+        state.savedPoster === previous.savedPoster &&
+        state.reward === previous.reward
       )
         return;
       const draft: Draft = {
@@ -151,6 +154,7 @@ export function initializePhotoStorage(): Promise<void> {
         template: state.template,
         layout: state.layout,
         poster: state.savedPoster,
+        reward: state.reward,
       };
       message("Saving photos on this device…");
       queue = queue

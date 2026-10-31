@@ -1,0 +1,26 @@
+from django.contrib.auth import views as auth_views
+from django.urls import include, path
+from rest_framework.routers import DefaultRouter
+
+from . import views
+
+router = DefaultRouter()
+router.register("mirrors", views.MirrorViewSet, basename="admin-mirror")
+router.register("customers", views.CustomerViewSet, basename="admin-customer")
+
+api_urlpatterns = [
+    path("mirrors/", views.PublicMirrorList.as_view(), name="public-mirrors"),
+    path("mirrors/stream/", views.mirror_stream, name="public-mirrors-stream"),
+    path("mirrors/version/", views.PublicMirrorVersion.as_view(), name="public-mirrors-version"),
+    path("customers/", views.CustomerUpload.as_view(), name="customer-upload"),
+    path("customers/register/", views.CustomerRegister.as_view(), name="customer-register"),
+    path("customers/spin/", views.CustomerSpin.as_view(), name="customer-spin"),
+    path("admin/stats/", views.stats, name="admin-stats"),
+    path("admin/", include(router.urls)),
+]
+
+dashboard_urlpatterns = [
+    path("", views.dashboard, name="mirror-dashboard"),
+    path("login/", views.LockoutLoginView.as_view(), name="mirror-login"),
+    path("logout/", auth_views.LogoutView.as_view(next_page="mirror-login"), name="mirror-logout"),
+]

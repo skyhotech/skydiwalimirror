@@ -1,24 +1,33 @@
-import {
-  lazy,
-  Suspense,
-  useEffect,
-  useState,
-  useSyncExternalStore,
-} from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import { MotionConfig } from "motion/react";
+import { PhoneGate } from "./components/PhoneGate";
+import { registerPhone } from "./lib/backend";
+import { loadFaceModels } from "./lib/faceMatch";
 import { useStudio } from "./lib/store";
-import {
-  initializePhotoStorage,
-  subscribeStorage,
-  storageStatus,
-} from "./lib/persistence";
+import { initializePhotoStorage } from "./lib/persistence";
 const CameraStudio = lazy(() => import("./components/CameraStudio"));
 const Editor = lazy(() => import("./components/Editor"));
 export default function App() {
   const step = useStudio((s) => s.step);
+  const phone = useStudio((s) => s.phone);
   const [hydrated, setHydrated] = useState(false);
-  const saved = useStudio((s) => Boolean(s.selfie || s.products.length));
-  const status = useSyncExternalStore(subscribeStorage, storageStatus);
+  // On start, re-check a number remembered from an earlier visit against the
+  // database, so a prize already won (on any device) is restored rather than
+  // re-spun. Fresh sign-ins are checked by PhoneGate itself.
+  useEffect(() => {
+    const remembered = useStudio.getState().phone;
+    if (!remembered) return;
+    registerPhone(remembered)
+      .then((c) => {
+        if (c.reward && !useStudio.getState().reward)
+          useStudio.getState().setReward(c.reward);
+      })
+      .catch(() => {});
+  }, []);
+  // Warm up the face-check models while the customer takes photos.
+  useEffect(() => {
+    if (phone) void loadFaceModels().catch(() => {});
+  }, [phone]);
   useEffect(() => {
     let active = true;
     void initializePhotoStorage().then(() => {
@@ -30,6 +39,14 @@ export default function App() {
   }, []);
   if (!hydrated)
     return <div className="loading">Opening your saved studio…</div>;
+  if (!phone)
+    return (
+      <MotionConfig reducedMotion="user">
+        <main id="main" className="mobile-studio">
+          <PhoneGate />
+        </main>
+      </MotionConfig>
+    );
   return (
     <MotionConfig reducedMotion="user">
       <main id="main" className="mobile-studio">
@@ -40,14 +57,6 @@ export default function App() {
             <Editor />
           )}
         </Suspense>
-        <section className="local-photo-storage">
-          <p role="status">{status}</p>
-          {saved && (
-            <button onClick={() => useStudio.getState().reset()}>
-              Clear saved photos
-            </button>
-          )}
-        </section>
       </main>
     </MotionConfig>
   );

@@ -75,5 +75,19 @@ export const templates: Template[] = [
     artwork: "frames/1.jpeg",
   },
 ];
+// Built-in themes are the offline fallback; the backend replaces them live.
+const listeners = new Set<() => void>();
+export function subscribeTemplates(fn: () => void) {
+  listeners.add(fn);
+  return () => {
+    listeners.delete(fn);
+  };
+}
+// Mutates in place so every module holding `templates` sees the new list.
+export function replaceTemplates(next: Template[]) {
+  if (!next.length) return;
+  templates.splice(0, templates.length, ...next);
+  listeners.forEach((fn) => fn());
+}
 export const getTemplate = (id: string) =>
   templates.find((t) => t.id === id) ?? templates[0];

@@ -1,6 +1,7 @@
 import type { Template, Rect } from "../templates";
 import type { Photo, Layout } from "./store";
 import { frameAsset } from "./frameAssets";
+import { getReward, rewardImage } from "./rewards";
 export const WIDTH = 1080,
   HEIGHT = 1920;
 type Source = HTMLImageElement | HTMLVideoElement | HTMLCanvasElement;
@@ -76,6 +77,7 @@ export type Composition = {
   video?: HTMLVideoElement | HTMLCanvasElement;
   mirror?: boolean;
   productVideo?: HTMLVideoElement;
+  reward?: string | null;
 };
 // Mirror contours are calibrated to the two supplied 900 × 1600 posters.
 function mirrorPath(ctx: CanvasRenderingContext2D, t: Template) {
@@ -221,6 +223,7 @@ export function renderPoster(
     );
     ctx.restore();
   }
+  drawReward(ctx, t, state.reward);
   if (!asset.image) {
     ctx.fillStyle = "#fff4dc";
     ctx.textAlign = "center";
@@ -235,4 +238,50 @@ export function renderPoster(
     ctx.font = "22px Arial";
     ctx.fillText(t.name, WIDTH / 2, HEIGHT / 2 + 45);
   }
+}
+// "I won" badge across the bottom of the mirror, above the frame artwork.
+function drawReward(
+  ctx: CanvasRenderingContext2D,
+  t: Template,
+  id: string | null | undefined,
+) {
+  const reward = getReward(id);
+  if (!reward) return;
+  const m = t.selfie,
+    h = 150,
+    w = Math.min(m.w - 40, 660),
+    x = m.x + (m.w - w) / 2,
+    y = m.y + m.h - h - 36,
+    pad = 16,
+    size = h - pad * 2;
+  ctx.save();
+  ctx.shadowColor = "rgba(0,0,0,0.35)";
+  ctx.shadowBlur = 18;
+  rounded(ctx, { x, y, w, h }, 28);
+  ctx.fillStyle = "rgba(23,18,13,0.86)";
+  ctx.fill();
+  ctx.shadowColor = "transparent";
+  ctx.lineWidth = 4;
+  ctx.strokeStyle = t.gold;
+  ctx.stroke();
+  const image = rewardImage(reward);
+  const tile = { x: x + pad, y: y + pad, w: size, h: size };
+  ctx.save();
+  rounded(ctx, tile, 18);
+  ctx.clip();
+  ctx.fillStyle = "#fff4dc";
+  ctx.fillRect(tile.x, tile.y, tile.w, tile.h);
+  if (image) ctx.drawImage(image, tile.x, tile.y, tile.w, tile.h);
+  ctx.restore();
+  const tx = tile.x + size + 24,
+    maxText = x + w - tx - pad;
+  ctx.textAlign = "left";
+  ctx.textBaseline = "alphabetic";
+  ctx.fillStyle = t.gold;
+  ctx.font = "bold 30px Arial";
+  ctx.fillText("I WON A FREE GIFT!", tx, y + 62, maxText);
+  ctx.fillStyle = "#fff9f0";
+  ctx.font = "bold 46px Arial";
+  ctx.fillText(reward.label, tx, y + 116, maxText);
+  ctx.restore();
 }

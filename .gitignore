@@ -6,3 +6,10 @@ test-results/
 playwright-report/
 *.tsbuildinfo
 .DS_Store
+backend/.venv/
+backend/db.sqlite3
+backend/media/
+backend/staticfiles/
+__pycache__/
+graphify-out/
+backend/backups/

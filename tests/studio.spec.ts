@@ -1,4 +1,21 @@
 import { test, expect, type Page } from "@playwright/test";
+// Never write test customers into the real backend: stub the upload endpoint.
+// Individual tests can override this with their own page.route().
+// Customers are signed in by mobile number; the server picks the prize once.
+test.beforeEach(async ({ page }) => {
+  await page.route("**/api/customers/", (route) =>
+    route.fulfill({ status: 201, json: { id: 0 } }),
+  );
+  await page.route("**/api/customers/register/", (route) =>
+    route.fulfill({ json: { phone: "9845012345", reward: null } }),
+  );
+  await page.route("**/api/customers/spin/", (route) =>
+    route.fulfill({ json: { reward: "smart-watch" } }),
+  );
+  await page.addInitScript(() =>
+    localStorage.setItem("sky-customer-phone", "9845012345"),
+  );
+});
 async function mockCamera(page: Page, rearUnavailable = false) {
   await page.route("**/ai/**", (r) => r.abort());
   await page.addInitScript(
@@ -89,7 +106,7 @@ test("rear camera appears in the small product box, then captures and shares", a
           Array.from(
             (c as HTMLCanvasElement)
               .getContext("2d")!
-              .getImageData(270, 670, 1, 1).data,
+              .getImageData(270, 670 + 75, 1, 1).data,
           ).slice(0, 3),
         ),
     )
@@ -108,6 +125,7 @@ test("rear camera appears in the small product box, then captures and shares", a
       exact: true,
     })
     .click();
+  await spinAndClaim(page);
   await expect(
     page.getByRole("textbox", { name: "Your SKY Instagram caption" }),
   ).toBeVisible();
@@ -126,14 +144,17 @@ test("rear camera appears in the small product box, then captures and shares", a
   await page
     .getByRole("button", { name: "Festive Celebration", exact: true })
     .click();
-  await page.getByRole("button", { name: "Generate my poster" }).click();
-  const dl = page.waitForEvent("download");
-  await page.getByRole("button", { name: "Download Poster" }).click();
-  const file = await dl,
-    fs = await import("node:fs/promises"),
-    bytes = await fs.readFile((await file.path())!);
-  expect(bytes.readUInt32BE(16)).toBe(1080);
-  expect(bytes.readUInt32BE(20)).toBe(1920);
+  // Kiosk editor: only the frame slider and posting remain.
+  for (const hidden of [
+    "Generate my poster",
+    "Reset position",
+    "Copy caption",
+    "Clear saved photos",
+  ])
+    await expect(page.getByRole("button", { name: hidden })).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Post on Instagram", exact: true }),
+  ).toBeVisible();
 });
 test("product camera automatically falls back to front camera", async ({
   page,
@@ -157,6 +178,7 @@ test("product camera automatically falls back to front camera", async ({
       exact: true,
     })
     .click();
+  await spinAndClaim(page);
   await expect(
     page.getByRole("textbox", { name: "Your SKY Instagram caption" }),
   ).toBeVisible();
@@ -247,6 +269,14 @@ test("canvas expression effects change the mouth pixels and preserve natural out
   expect(result.changed).toBeGreaterThan(100);
   expect(result.outsideUnchanged).toBe(true);
 });
+
+// The prize wheel opens after the first product photo; spin it and claim.
+async function spinAndClaim(page: import("@playwright/test").Page) {
+  const dialog = page.getByRole("dialog", { name: "Spin the wheel" });
+  await dialog.getByRole("button", { name: "Tap to spin" }).click();
+  // The prize is added to the poster automatically after the win.
+  await expect(dialog).toBeHidden({ timeout: 10_000 });
+}
 
 test("both bundled original frames load without any upload prompt", async ({
   page,
@@ -369,6 +399,7 @@ test("Post on Instagram shares the completed poster with generated SKY caption",
       exact: true,
     })
     .click();
+  await spinAndClaim(page);
   await expect
     .poll(() =>
       page.evaluate(
@@ -379,7 +410,7 @@ test("Post on Instagram shares the completed poster with generated SKY caption",
       files: 1,
       type: "image/png",
       width: 1080,
-      height: 1920,
+      height: 2400,
       text: expect.stringContaining("@skymobileindia"),
     });
   await expect(
@@ -418,6 +449,7 @@ test("Instagram fallback downloads poster and opens Instagram with caption ready
       exact: true,
     })
     .click();
+  await spinAndClaim(page);
   expect((await dl).suggestedFilename()).toContain("SKY-Diwali");
   const instagram = await popup;
   await expect(instagram).toHaveURL("https://www.instagram.com/");
@@ -434,9 +466,7 @@ test("selfie, product photos and generated poster persist locally and can be cle
 }) => {
   await mockCamera(page);
   await takeSelfie(page);
-  await expect(
-    page.getByRole("status").filter({ hasText: "Photos saved on this device" }),
-  ).toBeVisible();
+  await expect.poll(() => savedDraft(page)).toMatchObject({ selfie: true });
   await page.reload();
   await expect(
     page.getByRole("button", {
@@ -454,9 +484,8 @@ test("selfie, product photos and generated poster persist locally and can be cle
       exact: true,
     })
     .click();
-  await expect(
-    page.getByRole("status").filter({ hasText: "Photos saved on this device" }),
-  ).toBeVisible();
+  await spinAndClaim(page);
+  await expect.poll(() => savedDraft(page)).toMatchObject({ selfie: true });
   await expect
     .poll(() =>
       page.evaluate(async () => {
@@ -489,19 +518,198 @@ test("selfie, product photos and generated poster persist locally and can be cle
   await expect(
     page.getByRole("button", { name: "Post on Instagram", exact: true }),
   ).toBeEnabled();
-  await page.getByRole("button", { name: "Clear saved photos" }).click();
-  await expect(
-    page
-      .getByRole("status")
-      .filter({ hasText: "No saved photos on this device" }),
-  ).toBeVisible();
-  await page.reload();
-  await expect(page.locator(".camera-stage")).toBeVisible();
-  await expect(page.locator(".camera-stage canvas")).not.toHaveAttribute(
-    "aria-label",
-    /with your selfie/,
-  );
-  await expect(
-    page.getByRole("button", { name: "Clear saved photos" }),
-  ).toHaveCount(0);
+  // Next customer clears this visit and signs the customer out.
+  await page.getByRole("button", { name: "Next customer" }).click();
+  await expect(page.getByLabel("Mobile number", { exact: true })).toBeVisible();
+  expect(
+    await page.evaluate(() => localStorage.getItem("sky-customer-phone")),
+  ).toBeNull();
 });
+
+test("prize wheel spins after the product photo and puts the reward on the poster", async ({
+  page,
+}) => {
+  await mockCamera(page);
+  await takeSelfie(page);
+  await page
+    .getByRole("button", {
+      name: "Capture product and post on Instagram",
+      exact: true,
+    })
+    .click();
+  const dialog = page.getByRole("dialog", { name: "Spin the wheel" });
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole("button", { name: "Tap to spin" }).click();
+  await expect(
+    dialog.getByRole("button", { name: "Spinning…" }),
+  ).toBeDisabled();
+  // The wheel must visibly turn, not jump straight to the result.
+  const angle = () =>
+    page
+      .locator(".spin-wheel")
+      .evaluate((el) => getComputedStyle(el).transform);
+  const early = await angle();
+  await page.waitForTimeout(400);
+  expect(await angle()).not.toBe(early);
+  await expect(dialog.getByRole("status")).toHaveText(
+    /You won a (Neck Band|Mini Speaker|Smart Watch|Wired Headphone|Mobile Stand|Power Bank)!/,
+    { timeout: 10_000 },
+  );
+  await expect(dialog).toContainText("Adding your gift to the poster");
+  await expect(
+    dialog.getByRole("button", { name: "Add to my poster" }),
+  ).toHaveCount(0);
+  await expect(dialog).toBeHidden({ timeout: 5_000 });
+  await expect(
+    page.getByRole("textbox", { name: "Your SKY Instagram caption" }),
+  ).toBeVisible();
+});
+
+test("reloading during the prize wheel cannot re-roll the prize", async ({
+  page,
+}) => {
+  await mockCamera(page);
+  await takeSelfie(page);
+  await page
+    .getByRole("button", {
+      name: "Capture product and post on Instagram",
+      exact: true,
+    })
+    .click();
+  const dialog = page.getByRole("dialog", { name: "Spin the wheel" });
+  await dialog.getByRole("button", { name: "Tap to spin" }).click();
+  await expect(dialog.getByRole("status")).toHaveText(/You won a (.+)!/, {
+    timeout: 10_000,
+  });
+  const first = await dialog.getByRole("status").textContent();
+  // Customer reloads instead of claiming, hoping for a better prize.
+  await page.reload();
+  const again = page.getByRole("dialog", { name: "Spin the wheel" });
+  await expect(again).toBeVisible();
+  await again.getByRole("button", { name: "Tap to spin" }).click();
+  await expect(again.getByRole("status")).toHaveText(first!, {
+    timeout: 10_000,
+  });
+  await expect(again).toBeHidden({ timeout: 5_000 });
+});
+
+test("a failed customer upload is kept and retried until it succeeds", async ({
+  page,
+}) => {
+  const attempts: string[] = [];
+  let online = false;
+  await page.route("**/api/customers/", (route) => {
+    attempts.push(online ? "ok" : "fail");
+    return online
+      ? route.fulfill({ status: 201, json: { id: 1 } })
+      : route.abort("internetdisconnected");
+  });
+  await mockCamera(page);
+  await takeSelfie(page);
+  await page
+    .getByRole("button", {
+      name: "Capture product and post on Instagram",
+      exact: true,
+    })
+    .click();
+  await spinAndClaim(page);
+  await expect.poll(() => attempts.length).toBeGreaterThan(0);
+  online = true;
+  // The browser regaining connectivity flushes the outbox.
+  await page.evaluate(() => window.dispatchEvent(new Event("online")));
+  await expect.poll(() => attempts.at(-1)).toBe("ok");
+  const left = await page.evaluate(
+    () =>
+      new Promise<number>((resolve) => {
+        const r = indexedDB.open("sky-upload-outbox", 1);
+        r.onsuccess = () => {
+          const c = r.result
+            .transaction("uploads")
+            .objectStore("uploads")
+            .count();
+          c.onsuccess = () => resolve(c.result);
+        };
+      }),
+  );
+  expect(left).toBe(0);
+});
+
+test("customers must enter a valid mobile number before the studio opens", async ({
+  page,
+}) => {
+  const registered: string[] = [];
+  await page.route("**/api/customers/register/", async (route) => {
+    const { phone } = route.request().postDataJSON() as { phone: string };
+    registered.push(phone);
+    await route.fulfill({ json: { phone, reward: null } });
+  });
+  await page.addInitScript(() => localStorage.removeItem("sky-customer-phone"));
+  await mockCamera(page);
+  await page.goto("/");
+  const field = page.getByLabel("Mobile number", { exact: true });
+  await expect(field).toBeVisible();
+  await expect(page.locator(".camera-stage")).toHaveCount(0);
+  const go = page.getByRole("button", { name: "Proceed" });
+  await field.fill("12345");
+  await expect(go).toBeDisabled();
+  await field.fill("5876543210");
+  await expect(go).toBeDisabled();
+  // Made-up looking numbers are refused too.
+  for (const fake of ["9876543210", "9999999999", "9000000000", "9898989898"]) {
+    await field.fill(fake);
+    await expect(go).toBeDisabled();
+  }
+  await expect(
+    page.getByText("Enter a valid 10-digit mobile number."),
+  ).toBeVisible();
+  await field.fill("9123456789");
+  await expect(page.getByText(/agree to a selfie & face check/)).toBeVisible();
+  await go.click();
+  await expect(page.locator(".camera-stage")).toBeVisible();
+  expect(registered).toEqual(["9123456789"]);
+});
+
+test("a number that already won gets its prize back without spinning", async ({
+  page,
+}) => {
+  await page.route("**/api/customers/register/", (route) =>
+    route.fulfill({ json: { phone: "9845012345", reward: "power-bank" } }),
+  );
+  await mockCamera(page);
+  await takeSelfie(page);
+  await page
+    .getByRole("button", {
+      name: "Capture product and post on Instagram",
+      exact: true,
+    })
+    .click();
+  await expect(
+    page.getByRole("dialog", { name: "Spin the wheel" }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("textbox", { name: "Your SKY Instagram caption" }),
+  ).toBeVisible();
+});
+
+// Reads what the studio saved on the device (the storage status bar is hidden).
+async function savedDraft(page: Page) {
+  return page.evaluate(
+    () =>
+      new Promise<{ selfie: boolean; product: boolean }>((resolve) => {
+        const r = indexedDB.open("sky-private-photos", 1);
+        r.onsuccess = () => {
+          const g = r.result
+            .transaction("drafts")
+            .objectStore("drafts")
+            .get("latest-draft");
+          g.onsuccess = () =>
+            resolve({
+              selfie: g.result?.selfie?.blob instanceof Blob,
+              product: g.result?.products?.[0]?.blob instanceof Blob,
+            });
+          g.onerror = () => resolve({ selfie: false, product: false });
+        };
+        r.onerror = () => resolve({ selfie: false, product: false });
+      }),
+  );
+}

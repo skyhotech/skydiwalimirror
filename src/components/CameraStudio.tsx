@@ -7,6 +7,7 @@ import {
   Copy,
   ExternalLink,
   Download,
+  UserPlus,
 } from "lucide-react";
 import { motion } from "motion/react";
 import { useCamera } from "../hooks/useCamera";
@@ -14,11 +15,20 @@ import { useExpression } from "../hooks/useExpression";
 import { useStudio, MAX_PRODUCTS } from "../lib/store";
 import { capture, canvasBlob, fromBlob, download } from "../lib/images";
 import { instagramCaption, copyCaption } from "../lib/sharing";
-import { renderPoster } from "../lib/renderer";
+import {
+  instagramReady,
+  renderInstagramPost,
+  POST_HEIGHT,
+  HEADER,
+} from "../lib/instagram";
 import { frameAsset } from "../lib/frameAssets";
 import { getTemplate, templates } from "../templates";
 import { Poster } from "./Poster";
 import { Templates } from "./Templates";
+import { SpinWheel } from "./SpinWheel";
+import type { Reward } from "../lib/rewards";
+import { spinPrize } from "../lib/backend";
+import { faceFingerprint } from "../lib/faceMatch";
 export default function CameraStudio() {
   const s = useStudio(),
     product = s.step === "product";
@@ -28,7 +38,8 @@ export default function CameraStudio() {
     [flash, setFlash] = useState(false),
     [completed, setCompleted] = useState(false),
     [poster, setPoster] = useState<Blob | null>(null),
-    [captionMessage, setCaptionMessage] = useState("");
+    [captionMessage, setCaptionMessage] = useState(""),
+    [spinOpen, setSpinOpen] = useState(false);
   const busyRef = useRef(false);
   const camera = useCamera(
     product ? "environment" : "user",
@@ -123,40 +134,65 @@ export default function CameraStudio() {
       s.addProduct(photo);
       camera.stop();
       setCompleted(true);
-      setMessage("Preparing your Instagram poster…");
-      const current = useStudio.getState();
-      if (!current.selfie) throw new Error("Take a selfie first.");
-      if (frameAsset(getTemplate(current.template)).status !== "ready")
-        throw new Error("The frame is still loading. Please try again.");
-      const c = document.createElement("canvas");
-      c.width = 1080;
-      c.height = 1920;
-      const ctx = c.getContext("2d");
-      if (!ctx) throw new Error("Could not prepare your poster. Try again.");
-      renderPoster(ctx, {
-        template: getTemplate(current.template),
-        selfie: current.selfie,
-        products: current.products,
-        logo: current.logo,
-        layout: current.layout,
-      });
-      const blob = await canvasBlob(c);
-      c.width = c.height = 1;
-      setPoster(blob);
-      s.setSavedPoster(blob);
-      await post(
-        blob,
-        instagramCaption(
-          current.products.length,
-          current.products.map((p) => p.label),
-        ),
-      );
+      // First product unlocks the prize wheel; its result goes on the poster.
+      if (!useStudio.getState().reward) {
+        setSpinOpen(true);
+        setMessage("Spin the wheel for your free gift!");
+        return;
+      }
+      await publish();
     } catch (e) {
       setMessage((e as Error).message);
     } finally {
       busyRef.current = false;
       setBusy(false);
     }
+  }
+  async function claim(reward: Reward) {
+    s.setReward(reward.id);
+    setSpinOpen(false);
+    busyRef.current = true;
+    setBusy(true);
+    try {
+      await publish();
+    } catch (e) {
+      setMessage((e as Error).message);
+    } finally {
+      busyRef.current = false;
+      setBusy(false);
+    }
+  }
+  async function publish() {
+    setMessage("Preparing your Instagram poster…");
+    const current = useStudio.getState();
+    if (!current.selfie) throw new Error("Take a selfie first.");
+    if (frameAsset(getTemplate(current.template)).status !== "ready")
+      throw new Error("The frame is still loading. Please try again.");
+    const c = document.createElement("canvas");
+    await instagramReady();
+    c.width = 1080;
+    c.height = POST_HEIGHT;
+    const ctx = c.getContext("2d");
+    if (!ctx) throw new Error("Could not prepare your poster. Try again.");
+    renderInstagramPost(ctx, {
+      template: getTemplate(current.template),
+      selfie: current.selfie,
+      products: current.products,
+      logo: current.logo,
+      layout: current.layout,
+      reward: current.reward,
+    });
+    const blob = await canvasBlob(c);
+    c.width = c.height = 1;
+    setPoster(blob);
+    s.setSavedPoster(blob);
+    await post(
+      blob,
+      instagramCaption(
+        current.products.length,
+        current.products.map((p) => p.label),
+      ),
+    );
   }
   function changeTemplate(direction: number) {
     if (completed) return;
@@ -207,6 +243,7 @@ export default function CameraStudio() {
             className="hidden-video"
           />
           <Poster
+            chrome
             live={camera.ready && !completed}
             state={{
               template,
@@ -214,6 +251,7 @@ export default function CameraStudio() {
               products: s.products,
               logo: s.logo,
               layout: s.layout,
+              reward: s.reward,
               video:
                 !product && camera.ready
                   ? effect.ready
@@ -232,7 +270,7 @@ export default function CameraStudio() {
               className="inline-product-hint"
               style={{
                 left: `${template.product.x / 10.8}%`,
-                top: `${template.product.y / 19.2}%`,
+                top: `${((HEADER + template.product.y) / POST_HEIGHT) * 100}%`,
                 width: `${template.product.w / 10.8}%`,
               }}
             >
@@ -310,6 +348,9 @@ export default function CameraStudio() {
             <button className="text-button" onClick={() => s.setStep("edit")}>
               Edit poster
             </button>
+            <button className="text-button" onClick={() => s.reset()}>
+              <UserPlus size={13} /> Next customer
+            </button>
             {poster && (
               <button
                 className="text-button"
@@ -321,6 +362,14 @@ export default function CameraStudio() {
           </div>
         )}
       </aside>
+      {spinOpen && (
+        <SpinWheel
+          getPrize={async () =>
+            spinPrize(s.phone ?? "", await faceFingerprint(s.selfie?.image))
+          }
+          onClaim={(r) => void claim(r)}
+        />
+      )}
       {completed && (
         <section className="inline-caption-panel">
           <label htmlFor="inline-sky-caption">Your SKY Instagram caption</label>

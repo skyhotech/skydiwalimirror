@@ -1,0 +1,531 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SKY Mirror Admin</title>
+<style>
+  :root {
+    --bg: #f6f1ea; --panel: #fff; --ink: #2a1d14; --muted: #7a6a5a; --line: #e6dccf;
+    --gold: #c8912f; --accent: #d22856; --side: #17120d; --side-ink: #e9dcc8;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: system-ui, -apple-system, sans-serif; background: var(--bg); color: var(--ink); }
+  .app { display: grid; grid-template-columns: 220px 1fr; min-height: 100vh; }
+  aside { background: var(--side); color: var(--side-ink); padding: 20px 12px; display: flex; flex-direction: column; gap: 4px; position: sticky; top: 0; height: 100vh; }
+  aside h1 { font-size: 17px; color: #e8bd62; margin: 0 8px 18px; }
+  aside a { color: inherit; text-decoration: none; padding: 10px 12px; border-radius: 10px; font-size: 15px; display: flex; justify-content: space-between; }
+  aside a.active, aside a:hover { background: #2c2219; color: #fff; }
+  aside .badge { background: #3a2c1f; border-radius: 99px; padding: 0 8px; font-size: 12px; line-height: 20px; }
+  aside .spacer { flex: 1; }
+  aside .user { font-size: 13px; color: #9d8c76; padding: 0 12px 8px; }
+  main { padding: 24px 28px 60px; min-width: 0; }
+  h2 { margin: 0 0 18px; font-size: 22px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 18px; }
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 14px; margin-bottom: 18px; }
+  .stat b { display: block; font-size: 30px; margin-top: 6px; }
+  .stat span { color: var(--muted); font-size: 13px; }
+  .bars { display: flex; align-items: flex-end; gap: 10px; height: 140px; padding-top: 10px; }
+  .bars div { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px; font-size: 11px; color: var(--muted); height: 100%; justify-content: flex-end; }
+  .bars i { display: block; width: 100%; background: var(--gold); border-radius: 6px 6px 0 0; min-height: 2px; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  button, .btn { font: inherit; font-size: 14px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); padding: 8px 14px; border-radius: 10px; cursor: pointer; text-decoration: none; display: inline-block; }
+  .primary { background: var(--ink); color: #fff; border-color: var(--ink); }
+  .danger { color: var(--accent); border-color: #f2c4cf; }
+  .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .toolbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; gap: 10px; flex-wrap: wrap; }
+  .toolbar h2 { margin: 0; }
+  input, select { font: inherit; font-size: 14px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: #fff; color: var(--ink); }
+  label.f { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); }
+  /* Mirrors */
+  .mirrors { display: grid; grid-template-columns: 300px 1fr; gap: 18px; align-items: start; }
+  .mlist { display: flex; flex-direction: column; gap: 8px; }
+  .mitem { display: flex; gap: 10px; align-items: center; padding: 8px; border: 1px solid var(--line); border-radius: 12px; background: #fff; cursor: pointer; }
+  .mitem.sel { border-color: var(--gold); box-shadow: 0 0 0 2px #f0d9a8; }
+  .mitem.dragging { opacity: .4; }
+  .mitem.over { border-top: 3px solid var(--gold); }
+  .mitem img { width: 44px; height: 78px; object-fit: cover; border-radius: 6px; background: #eee; }
+  .mitem .grip { cursor: grab; color: var(--muted); font-size: 18px; padding: 0 2px; user-select: none; }
+  .mitem .meta { flex: 1; min-width: 0; }
+  .mitem .meta b { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .mitem .meta small { color: var(--muted); }
+  .pill { font-size: 11px; padding: 1px 8px; border-radius: 99px; background: #e9f6ec; color: #237a3b; }
+  .pill.off { background: #f3eee8; color: var(--muted); }
+  .pill.warn { background: #fdecef; color: var(--accent); align-self: flex-start; }
+  .editor { display: grid; grid-template-columns: minmax(240px, 380px) 1fr; gap: 20px; }
+  .stage { position: relative; width: 100%; aspect-ratio: 1080 / 1920; background: #ddd center / 100% 100% no-repeat; border-radius: 12px; overflow: hidden; touch-action: none; user-select: none; }
+  .stage.empty::after { content: "Upload artwork"; position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); }
+  .box { position: absolute; border: 2px dashed; border-radius: 8px; cursor: move; display: flex; align-items: flex-start; justify-content: flex-start; }
+  .box span { font-size: 11px; font-weight: 700; padding: 2px 6px; color: #fff; border-radius: 0 0 6px 0; pointer-events: none; }
+  .box.selfie { border-color: #2b7cff; background: rgba(43,124,255,.18); }
+  .box.selfie span { background: #2b7cff; }
+  .box.product { border-color: #ff7a1a; background: rgba(255,122,26,.18); }
+  .box.product span { background: #ff7a1a; }
+  .handle { position: absolute; right: -7px; bottom: -7px; width: 14px; height: 14px; border-radius: 50%; background: #fff; border: 2px solid currentColor; cursor: nwse-resize; }
+  .box.selfie .handle { color: #2b7cff; } .box.product .handle { color: #ff7a1a; }
+  .fields { display: flex; flex-direction: column; gap: 12px; }
+  .fields .two { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .fields .four { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+  .fields .four input { width: 100%; }
+  .colors { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+  .colors input { width: 100%; height: 36px; padding: 2px; }
+  fieldset { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; margin: 0; }
+  legend { font-size: 12px; color: var(--muted); padding: 0 4px; }
+  .hint { font-size: 12px; color: var(--muted); margin: 0; }
+  /* Customers */
+  .cgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 14px; }
+  .cust { background: #fff; border: 1px solid var(--line); border-radius: 14px; overflow: hidden; display: flex; flex-direction: column; }
+  .cust .imgs { display: grid; grid-template-columns: 1fr 1fr; gap: 2px; background: #eee; }
+  .cust img { width: 100%; aspect-ratio: 9 / 16; object-fit: cover; display: block; cursor: zoom-in; }
+  .cust .info { padding: 10px 12px; font-size: 13px; display: flex; flex-direction: column; gap: 4px; }
+  .cust .info small { color: var(--muted); }
+  .cust .acts { display: flex; gap: 6px; padding: 0 12px 12px; }
+  .cust .acts > * { padding: 5px 10px; font-size: 12px; }
+  .recent { display: grid; grid-template-columns: repeat(auto-fill, minmax(90px, 1fr)); gap: 8px; }
+  .recent img { width: 100%; aspect-ratio: 9/16; object-fit: cover; border-radius: 8px; }
+  .lightbox { position: fixed; inset: 0; background: rgba(0,0,0,.85); display: none; place-items: center; z-index: 10; cursor: zoom-out; }
+  .lightbox.open { display: grid; }
+  .lightbox img { max-width: 92vw; max-height: 92vh; border-radius: 8px; }
+  .toast { position: fixed; right: 20px; bottom: 20px; background: var(--ink); color: #fff; padding: 10px 16px; border-radius: 10px; opacity: 0; transition: opacity .2s; pointer-events: none; }
+  .toast.show { opacity: 1; }
+  .toast.err { background: var(--accent); }
+  .empty-note { color: var(--muted); padding: 30px; text-align: center; }
+  [hidden] { display: none !important; }
+  @media (max-width: 1100px) { .mirrors, .editor { grid-template-columns: 1fr; } .stage { max-width: 380px; } }
+  @media (max-width: 760px) {
+    .app { grid-template-columns: 1fr; }
+    /* Sidebar becomes a sticky top bar that scrolls sideways if needed. */
+    aside {
+      position: sticky; top: 0; z-index: 5; height: auto; width: 100%;
+      flex-direction: row; align-items: center; gap: 4px;
+      padding: 8px 10px; padding-top: max(8px, env(safe-area-inset-top));
+      overflow-x: auto; scrollbar-width: none;
+    }
+    aside::-webkit-scrollbar { display: none; }
+    aside h1, aside .spacer, aside .user { display: none; }
+    aside a { flex: none; padding: 8px 9px; font-size: 13.5px; gap: 6px; }
+    aside .badge { padding: 0 6px; }
+    aside form { margin-left: auto; flex: none; }
+    aside form button { width: auto !important; padding: 7px 10px; font-size: 13px; }
+    main { padding: 14px 12px 40px; }
+    h2 { font-size: 20px; }
+    .grid2 { grid-template-columns: 1fr; }
+    .stats { grid-template-columns: 1fr 1fr; gap: 10px; }
+    .stat b { font-size: 24px; }
+    .toolbar .row { width: 100%; }
+    .toolbar .row > * { flex: 1 1 140px; min-width: 0; }
+    .cgrid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+    .cust .info { padding: 8px 10px; font-size: 12px; }
+    .cust .acts { flex-wrap: wrap; padding: 0 10px 10px; }
+    .fields .four { grid-template-columns: repeat(2, 1fr); }
+    .colors { grid-template-columns: repeat(2, 1fr); }
+    .stage { max-width: 100%; }
+    input, select { font-size: 16px; } /* no iOS zoom on focus */
+  }
+  @media (max-width: 400px) {
+    /* Keep Log out on screen: drop the count badges from the top bar. */
+    aside .badge { display: none; }
+  }
+  @media (max-width: 340px) {
+    .cgrid { grid-template-columns: 1fr; }
+    aside { gap: 0; padding-left: 6px; padding-right: 6px; }
+    aside a { padding: 8px 7px; font-size: 12.5px; }
+    aside form button { padding: 6px 8px; font-size: 12px; }
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <aside>
+    <h1>✦ SKY Mirror</h1>
+    <a href="#dashboard" data-view="dashboard">Dashboard</a>
+    <a href="#mirrors" data-view="mirrors">Mirrors <span class="badge" id="nav-mirrors">–</span></a>
+    <a href="#customers" data-view="customers">Customers <span class="badge" id="nav-customers">–</span></a>
+    <div class="spacer"></div>
+    <div class="user">Signed in as {{ request.user.get_username }}</div>
+    <form method="post" action="{% url 'mirror-logout' %}">{% csrf_token %}<button style="width:100%">Log out</button></form>
+  </aside>
+
+  <main>
+    <!-- Dashboard -->
+    <section id="view-dashboard" hidden>
+      <h2>Dashboard</h2>
+      <div class="stats">
+        <div class="card stat"><span>Customers today</span><b id="s-today">–</b></div>
+        <div class="card stat"><span>Total customers</span><b id="s-customers">–</b></div>
+        <div class="card stat"><span>Active mirrors</span><b id="s-active">–</b></div>
+        <div class="card stat"><span>Total mirrors</span><b id="s-mirrors">–</b></div>
+      </div>
+      <div class="grid2">
+        <div class="card"><b>Selfies, last 7 days</b><div class="bars" id="s-bars"></div></div>
+        <div class="card"><b>Most used mirrors</b><div id="s-top" style="margin-top:10px"></div></div>
+      </div>
+      <div class="card" style="margin-top:14px">
+        <div class="toolbar" style="margin-bottom:10px"><b>Latest selfies</b><a class="btn" href="#customers">View all</a></div>
+        <div class="recent" id="s-recent"></div>
+      </div>
+    </section>
+
+    <!-- Mirrors -->
+    <section id="view-mirrors" hidden>
+      <div class="toolbar">
+        <h2>Mirrors</h2>
+        <button class="primary" id="m-new">+ New mirror</button>
+      </div>
+      <div class="mirrors">
+        <div>
+          <p class="hint" style="margin-bottom:8px">Drag ⠿ to reorder. The studio shows mirrors in this order.</p>
+          <div class="mlist" id="m-list"></div>
+        </div>
+        <div class="card" id="m-editor" hidden>
+          <form class="editor" id="m-form">
+            <div>
+              <div class="stage empty" id="stage">
+                <div class="box selfie" data-rect="selfie"><span>SELFIE</span><div class="handle"></div></div>
+                <div class="box product" data-rect="product"><span>PRODUCT</span><div class="handle"></div></div>
+              </div>
+              <p class="hint" style="margin-top:8px">Drag a box to place it on the theme. Drag the corner dot to resize it.</p>
+            </div>
+            <div class="fields">
+              <div class="two">
+                <label class="f">Name<input name="name" required maxlength="80"></label>
+                <label class="f">Slug (id)<input name="slug" maxlength="60" pattern="[-a-zA-Z0-9_]*" placeholder="auto"></label>
+              </div>
+              <label class="f">Subtitle<input name="subtitle" maxlength="160"></label>
+              <label class="f">Theme artwork (1080 × 1920 recommended)<input name="artwork" type="file" accept="image/*"></label>
+              <fieldset><legend>Selfie area (px on 1080 × 1920)</legend>
+                <div class="four" data-for="selfie">
+                  <label class="f">X<input type="number" data-k="x"></label><label class="f">Y<input type="number" data-k="y"></label>
+                  <label class="f">W<input type="number" data-k="w"></label><label class="f">H<input type="number" data-k="h"></label>
+                </div>
+              </fieldset>
+              <fieldset><legend>Product area</legend>
+                <div class="four" data-for="product">
+                  <label class="f">X<input type="number" data-k="x"></label><label class="f">Y<input type="number" data-k="y"></label>
+                  <label class="f">W<input type="number" data-k="w"></label><label class="f">H<input type="number" data-k="h"></label>
+                </div>
+              </fieldset>
+              <div class="colors">
+                <label class="f">Background<input type="color" name="bg"></label>
+                <label class="f">Ink<input type="color" name="ink"></label>
+                <label class="f">Gold<input type="color" name="gold"></label>
+                <label class="f">Accent<input type="color" name="accent"></label>
+              </div>
+              <div class="row">
+                <label class="row"><input type="checkbox" name="is_active"> Visible in studio</label>
+                <label class="row"><input type="checkbox" name="light"> Light theme</label>
+                <label class="row"><input type="checkbox" name="arch"> Arch</label>
+              </div>
+              <div class="row">
+                <button class="primary" type="submit" id="m-save">Save</button>
+                <button type="button" class="danger" id="m-delete">Delete</button>
+                <span class="hint" id="m-status"></span>
+              </div>
+            </div>
+          </form>
+        </div>
+      </div>
+    </section>
+
+    <!-- Customers -->
+    <section id="view-customers" hidden>
+      <div class="toolbar">
+        <h2>Customers</h2>
+        <div class="row">
+          <input id="c-q" placeholder="Search name or phone">
+          <a class="btn" href="/api/admin/customers/export/" download>Export CSV</a>
+          <select id="c-mirror"><option value="">All mirrors</option></select>
+        </div>
+      </div>
+      <div class="cgrid" id="c-grid"></div>
+      <div style="text-align:center;margin-top:18px"><button id="c-more" hidden>Load more</button></div>
+    </section>
+  </main>
+</div>
+<div class="lightbox" id="lightbox"><img alt=""></div>
+<div class="toast" id="toast"></div>
+
+<script>
+(() => {
+  const W = 1080, H = 1920, MIN = 20;
+  const $ = (s, el = document) => el.querySelector(s);
+  const $$ = (s, el = document) => [...el.querySelectorAll(s)];
+  const csrf = () => (document.cookie.match(/(?:^|;\s*)csrftoken=([^;]+)/) || [])[1] || "";
+  const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+  async function api(path, opts = {}) {
+    const headers = { "X-CSRFToken": csrf(), ...(opts.headers || {}) };
+    if (opts.json !== undefined) { headers["Content-Type"] = "application/json"; opts.body = JSON.stringify(opts.json); }
+    const res = await fetch("/api/admin/" + path, { credentials: "same-origin", ...opts, headers });
+    if (res.status === 403) { location.href = "{% url 'mirror-login' %}?next=" + encodeURIComponent(location.pathname + location.hash); throw new Error("Signed out"); }
+    if (!res.ok) {
+      let msg = res.statusText;
+      try { const d = await res.json(); msg = Object.entries(d).map(([k, v]) => `${k}: ${[].concat(v).join(" ")}`).join(" · "); } catch {}
+      throw new Error(msg);
+    }
+    return res.status === 204 ? null : res.json();
+  }
+
+  let toastTimer;
+  function toast(msg, err = false) {
+    const t = $("#toast");
+    t.textContent = msg; t.className = "toast show" + (err ? " err" : "");
+    clearTimeout(toastTimer); toastTimer = setTimeout(() => (t.className = "toast"), 2600);
+  }
+
+  const lightbox = $("#lightbox");
+  document.addEventListener("click", (e) => {
+    const img = e.target.closest("img[data-full]");
+    if (img) { $("img", lightbox).src = img.dataset.full; lightbox.classList.add("open"); }
+  });
+  lightbox.addEventListener("click", () => lightbox.classList.remove("open"));
+
+  // ---------------- Router ----------------
+  const views = { dashboard: loadDashboard, mirrors: loadMirrors, customers: () => loadCustomers(true) };
+  function route() {
+    const view = (location.hash.slice(1) || "dashboard");
+    const name = views[view] ? view : "dashboard";
+    $$("main > section").forEach((s) => (s.hidden = s.id !== "view-" + name));
+    $$("aside a[data-view]").forEach((a) => a.classList.toggle("active", a.dataset.view === name));
+    views[name]().catch((e) => toast(e.message, true));
+  }
+  window.addEventListener("hashchange", route);
+
+  // ---------------- Dashboard ----------------
+  async function loadDashboard() {
+    const [s, recent] = await Promise.all([api("stats/"), api("customers/?page_size=12")]);
+    $("#s-today").textContent = s.customers_today;
+    $("#s-customers").textContent = s.customers;
+    $("#s-active").textContent = s.active_mirrors;
+    $("#s-mirrors").textContent = s.mirrors;
+    $("#nav-mirrors").textContent = s.mirrors;
+    $("#nav-customers").textContent = s.customers;
+    const max = Math.max(1, ...s.per_day.map((d) => d.count));
+    $("#s-bars").innerHTML = s.per_day.map((d) =>
+      `<div>${d.count}<i style="height:${(d.count / max) * 100}%"></i>${d.date.slice(5)}</div>`).join("");
+    $("#s-top").innerHTML = s.top_mirrors.length
+      ? s.top_mirrors.map((m) => `<div class="row" style="justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--line)"><span>${esc(m.name)}</span><b>${m.n}</b></div>`).join("")
+      : `<p class="hint">No mirrors yet.</p>`;
+    $("#s-recent").innerHTML = recent.results.length
+      ? recent.results.map((c) => `<img src="${esc(c.poster)}" data-full="${esc(c.poster)}" alt="${esc(c.name || "Customer")}" loading="lazy">`).join("")
+      : `<p class="hint">No selfies yet.</p>`;
+  }
+
+  // ---------------- Mirrors ----------------
+  let mirrors = [], current = null, rects = {}, artworkFile = null;
+  const form = $("#m-form"), stage = $("#stage");
+
+  async function loadMirrors() {
+    mirrors = await api("mirrors/");
+    $("#nav-mirrors").textContent = mirrors.length;
+    renderList();
+    if (current) {
+      const fresh = mirrors.find((m) => m.id === current.id);
+      if (fresh) select(fresh); else closeEditor();
+    }
+  }
+
+  function renderList() {
+    const list = $("#m-list");
+    list.innerHTML = mirrors.length ? "" : `<div class="empty-note">No mirrors yet. Click “New mirror”.</div>`;
+    for (const m of mirrors) {
+      const el = document.createElement("div");
+      el.className = "mitem" + (current && current.id === m.id ? " sel" : "");
+      el.dataset.id = m.id;
+      el.innerHTML = `<span class="grip" title="Drag to reorder">⠿</span>
+        <img src="${esc(m.artwork)}" alt="">
+        <div class="meta"><b>${esc(m.name)}</b><small>${esc(m.slug)} · ${m.customer_count} selfies</small></div>
+        <span class="pill ${m.is_active ? "" : "off"}">${m.is_active ? "Live" : "Hidden"}</span>`;
+      el.addEventListener("click", () => select(m));
+      // Reorder is only armed while the grip is held, so clicks still select.
+      const grip = $(".grip", el);
+      grip.addEventListener("pointerdown", () => (el.draggable = true));
+      el.addEventListener("dragstart", (e) => { el.classList.add("dragging"); e.dataTransfer.effectAllowed = "move"; });
+      el.addEventListener("dragend", () => { el.classList.remove("dragging"); el.draggable = false; $$(".mitem.over").forEach((x) => x.classList.remove("over")); });
+      el.addEventListener("dragover", (e) => { e.preventDefault(); el.classList.add("over"); });
+      el.addEventListener("dragleave", () => el.classList.remove("over"));
+      el.addEventListener("drop", (e) => {
+        e.preventDefault();
+        const dragged = $(".mitem.dragging", list);
+        if (!dragged || dragged === el) return;
+        list.insertBefore(dragged, el);
+        saveOrder();
+      });
+      list.appendChild(el);
+    }
+  }
+
+  async function saveOrder() {
+    const ids = $$("#m-list .mitem").map((el) => Number(el.dataset.id));
+    try {
+      await api("mirrors/reorder/", { method: "POST", json: { ids } });
+      mirrors.sort((a, b) => ids.indexOf(a.id) - ids.indexOf(b.id));
+      renderList();
+      toast("Order saved — studio updates instantly");
+    } catch (e) { toast(e.message, true); }
+  }
+
+  function select(m) {
+    current = m; artworkFile = null;
+    $("#m-editor").hidden = false;
+    form.name.value = m.name; form.slug.value = m.slug; form.subtitle.value = m.subtitle;
+    form.artwork.value = "";
+    for (const k of ["bg", "ink", "gold", "accent"]) form[k].value = m[k];
+    for (const k of ["is_active", "light", "arch"]) form[k].checked = m[k];
+    rects = { selfie: { ...m.selfie }, product: { ...m.product } };
+    setStageImage(m.artwork);
+    $("#m-delete").hidden = false;
+    $("#m-status").textContent = `Updated ${new Date(m.updated_at).toLocaleString()}`;
+    drawBoxes(); renderList();
+  }
+
+  function closeEditor() { current = null; $("#m-editor").hidden = true; renderList(); }
+
+  $("#m-new").addEventListener("click", () => {
+    current = null; artworkFile = null;
+    $("#m-editor").hidden = false;
+    form.reset();
+    Object.assign(form, {});
+    form.bg.value = "#f7e7cc"; form.ink.value = "#3c2418"; form.gold.value = "#d6a447"; form.accent.value = "#d22856";
+    form.is_active.checked = true; form.light.checked = true; form.arch.checked = true;
+    rects = { selfie: { x: 184, y: 165, w: 712, h: 950 }, product: { x: 337, y: 1215, w: 405, h: 245 } };
+    setStageImage(null);
+    $("#m-delete").hidden = true;
+    $("#m-status").textContent = "New mirror";
+    drawBoxes(); renderList(); form.name.focus();
+  });
+
+  function setStageImage(url) {
+    stage.style.backgroundImage = url ? `url("${url}")` : "";
+    stage.classList.toggle("empty", !url);
+  }
+
+  form.artwork.addEventListener("change", () => {
+    artworkFile = form.artwork.files[0] || null;
+    if (artworkFile) setStageImage(URL.createObjectURL(artworkFile));
+  });
+
+  function clampRect(r) {
+    r.w = Math.max(MIN, Math.min(W, Math.round(r.w)));
+    r.h = Math.max(MIN, Math.min(H, Math.round(r.h)));
+    r.x = Math.max(0, Math.min(W - r.w, Math.round(r.x)));
+    r.y = Math.max(0, Math.min(H - r.h, Math.round(r.y)));
+    return r;
+  }
+
+  function drawBoxes() {
+    for (const key of ["selfie", "product"]) {
+      const r = rects[key], box = $(`.box[data-rect="${key}"]`, stage);
+      Object.assign(box.style, { left: (r.x / W) * 100 + "%", top: (r.y / H) * 100 + "%", width: (r.w / W) * 100 + "%", height: (r.h / H) * 100 + "%" });
+      for (const input of $$(`[data-for="${key}"] input`)) input.value = r[input.dataset.k];
+    }
+  }
+
+  // Number inputs mirror the boxes, for pixel-exact placement.
+  $$(".four input").forEach((input) => input.addEventListener("input", () => {
+    const key = input.closest("[data-for]").dataset.for;
+    const v = Number(input.value);
+    if (Number.isFinite(v)) { rects[key][input.dataset.k] = v; clampRect(rects[key]); drawBoxes(); }
+  }));
+
+  // Drag to move, drag the corner handle to resize. Pointer events cover mouse and touch.
+  $$(".box", stage).forEach((box) => box.addEventListener("pointerdown", (e) => {
+    e.preventDefault();
+    const key = box.dataset.rect, resize = e.target.classList.contains("handle");
+    const bounds = stage.getBoundingClientRect(), sx = W / bounds.width, sy = H / bounds.height;
+    const start = { ...rects[key] }, px = e.clientX, py = e.clientY;
+    box.setPointerCapture(e.pointerId);
+    const move = (ev) => {
+      const dx = (ev.clientX - px) * sx, dy = (ev.clientY - py) * sy;
+      const r = rects[key];
+      if (resize) {
+        r.w = Math.min(W - start.x, start.w + dx);
+        r.h = Math.min(H - start.y, start.h + dy);
+        r.x = start.x; r.y = start.y;
+      } else {
+        r.x = start.x + dx; r.y = start.y + dy;
+      }
+      clampRect(r); drawBoxes();
+    };
+    const up = () => { box.removeEventListener("pointermove", move); box.removeEventListener("pointerup", up); box.removeEventListener("pointercancel", up); };
+    box.addEventListener("pointermove", move);
+    box.addEventListener("pointerup", up);
+    box.addEventListener("pointercancel", up);
+  }));
+
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    if (!current && !artworkFile) return toast("Upload the theme artwork first", true);
+    const fd = new FormData();
+    for (const k of ["name", "slug", "subtitle", "bg", "ink", "gold", "accent"]) fd.append(k, form[k].value);
+    for (const k of ["is_active", "light", "arch"]) fd.append(k, form[k].checked ? "true" : "false");
+    fd.append("selfie", JSON.stringify(rects.selfie));
+    fd.append("product", JSON.stringify(rects.product));
+    if (artworkFile) fd.append("artwork", artworkFile);
+    $("#m-save").disabled = true;
+    try {
+      const saved = await api(current ? `mirrors/${current.id}/` : "mirrors/", { method: current ? "PATCH" : "POST", body: fd });
+      current = saved;
+      toast("Saved — studio updates instantly");
+      await loadMirrors();
+    } catch (err) { toast(err.message, true); }
+    finally { $("#m-save").disabled = false; }
+  });
+
+  $("#m-delete").addEventListener("click", async () => {
+    if (!current || !confirm(`Delete “${current.name}”? Customer selfies are kept.`)) return;
+    try { await api(`mirrors/${current.id}/`, { method: "DELETE" }); toast("Mirror deleted"); closeEditor(); await loadMirrors(); }
+    catch (err) { toast(err.message, true); }
+  });
+
+  // ---------------- Customers ----------------
+  const rewardLabel = (id) => id.split("-").map((w) => w[0].toUpperCase() + w.slice(1)).join(" ");
+  let cPage = 1, cTimer;
+  async function loadCustomers(reset) {
+    if (reset) {
+      cPage = 1; $("#c-grid").innerHTML = "";
+      const ms = await api("mirrors/");
+      const sel = $("#c-mirror"), keep = sel.value;
+      sel.innerHTML = `<option value="">All mirrors</option>` + ms.map((m) => `<option value="${m.id}">${esc(m.name)}</option>`).join("");
+      sel.value = keep;
+    }
+    const params = new URLSearchParams({ page: cPage });
+    if ($("#c-q").value.trim()) params.set("q", $("#c-q").value.trim());
+    if ($("#c-mirror").value) params.set("mirror", $("#c-mirror").value);
+    const data = await api("customers/?" + params);
+    $("#nav-customers").textContent = data.count;
+    const grid = $("#c-grid");
+    if (reset && !data.results.length) grid.innerHTML = `<div class="empty-note">No customers yet. Selfies appear here when someone exports a poster in the studio.</div>`;
+    for (const c of data.results) {
+      const el = document.createElement("div");
+      el.className = "cust";
+      el.innerHTML = `<div class="imgs">
+          ${c.selfie ? `<img src="${esc(c.selfie)}" data-full="${esc(c.selfie)}" alt="Selfie" loading="lazy">` : `<div></div>`}
+          <img src="${esc(c.poster)}" data-full="${esc(c.poster)}" alt="Poster" loading="lazy">
+        </div>
+        <div class="info"><b>${esc(c.name || "Guest #" + c.id)}</b>
+          ${c.reward ? `<span class="pill">🎁 ${esc(rewardLabel(c.reward))}</span>` : ""}
+          ${c.repeat_of_phone ? `<span class="pill warn" title="Same face as an earlier customer; given their prize">⚠ Same face as ${esc(c.repeat_of_phone)}</span>` : ""}
+          <small>${esc(c.mirror_name || "—")}${c.phone ? " · " + esc(c.phone) : ""}</small>
+          <small>${new Date(c.created_at).toLocaleString()}</small></div>
+        <div class="acts"><a class="btn" href="${esc(c.poster)}" download>Poster</a>
+          ${c.selfie ? `<a class="btn" href="${esc(c.selfie)}" download>Selfie</a>` : ""}
+          <button class="danger">Delete</button></div>`;
+      $("button.danger", el).addEventListener("click", async () => {
+        if (!confirm("Delete this customer and their photos?")) return;
+        try { await api(`customers/${c.id}/`, { method: "DELETE" }); el.remove(); toast("Deleted"); }
+        catch (err) { toast(err.message, true); }
+      });
+      grid.appendChild(el);
+    }
+    $("#c-more").hidden = !data.next;
+  }
+  $("#c-more").addEventListener("click", () => { cPage++; loadCustomers(false).catch((e) => toast(e.message, true)); });
+  $("#c-mirror").addEventListener("change", () => loadCustomers(true).catch((e) => toast(e.message, true)));
+  $("#c-q").addEventListener("input", () => { clearTimeout(cTimer); cTimer = setTimeout(() => loadCustomers(true).catch((e) => toast(e.message, true)), 300); });
+
+  route();
+})();
+</script>
+</body>
+</html>

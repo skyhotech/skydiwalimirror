@@ -1,5 +1,10 @@
 import { create } from "zustand";
-import { DEFAULT_TEMPLATE_ID } from "../templates";
+import {
+  DEFAULT_TEMPLATE_ID,
+  subscribeTemplates,
+  templates,
+} from "../templates";
+import { uploadCustomer } from "./backend";
 export type Step =
   "welcome" | "selfie" | "selfieReview" | "product" | "edit" | "result";
 export type Adjustment = { x: number; y: number; zoom: number };
@@ -17,10 +22,18 @@ export const MAX_PRODUCTS = 5;
 interface State {
   step: Step;
   template: string;
+  /** Bumped when the backend replaces the theme list, to re-render. */
+  catalog: number;
   selfie: Photo | null;
   products: Photo[];
   logo: Photo | null;
   layout: Layout;
+  /** Spin-the-wheel prize id once claimed; shown on the poster. */
+  reward: string | null;
+  setReward: (id: string | null) => void;
+  /** Signed-in customer's mobile number; one customer and one spin each. */
+  phone: string | null;
+  setPhone: (phone: string | null) => void;
   savedPoster: Blob | null;
   setSavedPoster: (poster: Blob | null) => void;
   setStep: (step: Step) => void;
@@ -37,15 +50,53 @@ interface State {
 function release(p: Photo | null) {
   if (p) URL.revokeObjectURL(p.url);
 }
+// The phone lives in localStorage (not the photo draft) so the sign-in gate
+// can be decided before photos are restored.
+const PHONE_KEY = "sky-customer-phone";
+function readPhone() {
+  try {
+    return localStorage.getItem(PHONE_KEY);
+  } catch {
+    return null;
+  }
+}
+function writePhone(phone: string | null) {
+  try {
+    if (phone) localStorage.setItem(PHONE_KEY, phone);
+    else localStorage.removeItem(PHONE_KEY);
+  } catch {
+    // Storage blocked: the number lasts for this tab only.
+  }
+}
 export const useStudio = create<State>((set, get) => ({
   step: "selfie",
   template: DEFAULT_TEMPLATE_ID,
+  catalog: 0,
   selfie: null,
   products: [],
   logo: null,
   layout: "card",
+  reward: null,
+  setReward: (reward) => set({ reward, savedPoster: null }),
+  phone: readPhone(),
+  setPhone: (phone) => {
+    writePhone(phone);
+    set({ phone });
+  },
   savedPoster: null,
-  setSavedPoster: (savedPoster) => set({ savedPoster }),
+  setSavedPoster: (savedPoster) => {
+    set({ savedPoster });
+    const { selfie, template, reward, phone } = get();
+    if (savedPoster && selfie)
+      void uploadCustomer({
+        session: selfie.id,
+        phone,
+        mirror: template,
+        reward,
+        poster: savedPoster,
+        selfie: selfie.blob,
+      });
+  },
   setStep: (step) => set({ step }),
   setTemplate: (template) => set({ template, savedPoster: null }),
   setSelfie: (p) => {
@@ -87,15 +138,28 @@ export const useStudio = create<State>((set, get) => ({
     set({ logo: p });
   },
   setLayout: (layout) => set({ layout, savedPoster: null }),
+  // Ends this customer's visit; the next person signs in with their number.
   reset: () => {
     release(get().selfie);
     get().products.forEach(release);
+    writePhone(null);
     set({
+      phone: null,
       selfie: null,
       products: [],
       savedPoster: null,
+      reward: null,
       step: "selfie",
       layout: "card",
     });
   },
 }));
+subscribeTemplates(() =>
+  useStudio.setState((s) => ({
+    catalog: s.catalog + 1,
+    // Fall back to the first theme if the selected one was removed or hidden.
+    template: templates.some((t) => t.id === s.template)
+      ? s.template
+      : templates[0].id,
+  })),
+);
