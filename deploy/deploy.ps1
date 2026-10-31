@@ -29,8 +29,13 @@ try {
       "DJANGO_SECRET_KEY=$secret", 'DJANGO_DEBUG=0', 'DJANGO_SSL_REDIRECT=0',
       'MEDIA_ROOT=D:/sky/diwali/media', 'DJANGO_ALLOWED_HOSTS=.skymobile.in',
       'CORS_ALLOWED_ORIGINS=https://diwali.skymobile.in,https://dreamdiwali.skymobile.in',
-      'CSRF_TRUSTED_ORIGINS=https://*.skymobile.in'
+      'CSRF_TRUSTED_ORIGINS=https://*.skymobile.in', 'TRUSTED_PROXIES=1'
     ) | Set-Content -Encoding ascii "$Backend\.env"
+  }
+  # Caddy sits in front: trust its X-Forwarded-For so rate limits are per
+  # visitor. Added to servers installed before this setting existed.
+  if (-not (Select-String -Path "$Backend\.env" -Pattern '^TRUSTED_PROXIES=' -Quiet)) {
+    Add-Content -Encoding ascii "$Backend\.env" 'TRUSTED_PROXIES=1'
   }
   $firstInstall = -not (Test-Path "$Backend\db.sqlite3")
 

@@ -73,6 +73,16 @@ class Mirror(models.Model):
             while Mirror.objects.filter(slug=slug).exclude(pk=self.pk).exists():
                 slug, n = f"{base}-{n}", n + 1
             self.slug = slug
+        # Freshly uploaded artwork is shrunk to the 1080 × 1920 poster size.
+        if self.artwork and not getattr(self.artwork, "_committed", True):
+            from .images import FRAME_SIZE, optimized
+
+            small = optimized(
+                self.artwork.file, FRAME_SIZE, quality=88, name=self.artwork.name,
+                only_if_smaller=True,
+            )
+            if small:
+                self.artwork = small
         super().save(*args, **kwargs)
 
 
@@ -108,6 +118,9 @@ class Customer(models.Model):
     )
     selfie = models.ImageField(upload_to=customer_path, blank=True)
     poster = models.ImageField(upload_to=customer_path, blank=True)
+    # Small previews for the dashboard grid; full images open on click.
+    selfie_thumb = models.ImageField(upload_to=customer_path, blank=True)
+    poster_thumb = models.ImageField(upload_to=customer_path, blank=True)
     created_at = models.DateTimeField(auto_now_add=True, db_index=True)
     updated_at = models.DateTimeField(auto_now=True)
 

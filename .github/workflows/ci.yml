@@ -1,5 +1,6 @@
-# Tests only, on GitHub-hosted runners. The server deploys main itself once this passes
-# (deploy/poll-and-deploy.ps1), so no self-hosted runner is exposed on this public repo.
+# Tests only, on GitHub-hosted runners. Deploys follow once this passes on main:
+# the Windows server pulls main itself (deploy/poll-and-deploy.ps1), and the Ubuntu
+# VPS is pushed to by deploy-vps.yml. No self-hosted runner is exposed on this public repo.
 name: CI
 on:
   push:

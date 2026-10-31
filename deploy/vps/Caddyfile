@@ -1,0 +1,66 @@
+# SKY Diwali API on the Ubuntu VPS, installed as /etc/caddy/Caddyfile.
+# The frontend is on Vercel; this serves only the API, dashboard and media.
+# Let's Encrypt issues short-lived (about 6 day) certificates for bare IP
+# addresses; Caddy renews them on its own. sslip.io is a fallback hostname
+# that resolves to the same IP.
+{
+	servers {
+		timeouts {
+			read_body 60s
+			idle 2m
+		}
+	}
+}
+
+222.167.207.123, 222-167-207-123.sslip.io {
+	tls {
+		issuer acme {
+			profile shortlived
+		}
+	}
+	encode zstd gzip
+	log {
+		output file /var/log/caddy/skymirror.log {
+			roll_size 10MiB
+			roll_keep 5
+		}
+		format json
+	}
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options nosniff
+		Referrer-Policy strict-origin-when-cross-origin
+		-Server
+	}
+	request_body {
+		max_size 36MB
+	}
+	# One vCPU: each open stream would hold a server thread, so the studio
+	# uses its once-a-second check instead.
+	handle /api/mirrors/stream/ {
+		respond 404
+	}
+	handle_path /static/* {
+		root * /opt/skymirror/backend/staticfiles
+		header Cache-Control "public, max-age=604800"
+		file_server
+	}
+	# Uploads are served straight from disk, images only: anything else under
+	# /media is refused so an uploaded file can never run as a page.
+	@media_image path_regexp media_image (?i)^/media/.+\.(jpe?g|png|webp)$
+	handle @media_image {
+		root * /var/lib/skymirror
+		# Uploaded files get unique names, so browsers may keep them for good.
+		header Cache-Control "public, max-age=31536000, immutable"
+		header Access-Control-Allow-Origin *
+		header Cross-Origin-Resource-Policy cross-origin
+		header Content-Security-Policy "default-src 'none'; sandbox"
+		file_server
+	}
+	handle /media/* {
+		respond 404
+	}
+	handle {
+		reverse_proxy 127.0.0.1:8000
+	}
+}

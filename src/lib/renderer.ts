@@ -112,9 +112,10 @@ function mirrorPath(ctx: CanvasRenderingContext2D, t: Template) {
     ctx.closePath();
   }
 }
-const overlays = new Map<string, HTMLCanvasElement>();
+// Keyed by the artwork image, so a new image for the same theme gets a new cut-out.
+const overlays = new WeakMap<HTMLImageElement, HTMLCanvasElement>();
 function artworkOverlay(t: Template, image: HTMLImageElement) {
-  const cached = overlays.get(t.id);
+  const cached = overlays.get(image);
   if (cached) return cached;
   const c = document.createElement("canvas");
   c.width = WIDTH;
@@ -162,7 +163,7 @@ function artworkOverlay(t: Template, image: HTMLImageElement) {
       );
     }
   ctx.putImageData(pixels, 0, 0);
-  overlays.set(t.id, c);
+  overlays.set(image, c);
   return c;
 }
 export function renderPoster(

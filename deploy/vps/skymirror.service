@@ -1,0 +1,35 @@
+# Installed as /etc/systemd/system/skymirror.service.
+[Unit]
+Description=SKY Diwali API (Gunicorn)
+After=network.target mysql.service
+Requires=mysql.service
+
+[Service]
+User=skymirror
+Group=skymirror
+UMask=0007
+WorkingDirectory=/opt/skymirror/backend
+EnvironmentFile=/etc/skymirror/.env
+# 1 vCPU / 1 GB: two workers keep one serving while the other compresses a
+# photo; threads cover slow uploads. Workers recycle to cap memory growth.
+ExecStart=/opt/skymirror/venv/bin/gunicorn skymirror.wsgi:application \
+  --bind 127.0.0.1:8000 --workers 2 --threads 4 --worker-class gthread \
+  --timeout 60 --graceful-timeout 20 --max-requests 800 --max-requests-jitter 80 \
+  --access-logfile - --error-logfile - --forwarded-allow-ips 127.0.0.1
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=always
+RestartSec=3
+MemoryHigh=380M
+MemoryMax=450M
+TasksMax=100
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/skymirror /var/log/skymirror
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=multi-user.target

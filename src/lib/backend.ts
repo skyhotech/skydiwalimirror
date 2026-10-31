@@ -1,7 +1,12 @@
 import { replaceTemplates, type Template } from "../templates";
 
 // Same-origin by default (Vite proxies /api in dev); set VITE_API_URL otherwise.
-const API = (import.meta.env.VITE_API_URL ?? "").replace(/\/$/, "") + "/api";
+/** Backend origin; empty when the studio and API share one site. */
+export const API_ORIGIN = (import.meta.env.VITE_API_URL ?? "").replace(
+  /\/$/,
+  "",
+);
+const API = API_ORIGIN + "/api";
 // Fallback when the event stream is unavailable (e.g. a proxy that buffers it).
 export const POLL_MS = 1000;
 

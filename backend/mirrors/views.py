@@ -20,6 +20,7 @@ from rest_framework.permissions import AllowAny, IsAdminUser
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from .images import POSTER_SIZE, SELFIE_SIZE, THUMB_SIZE, compressed_photo, optimized
 from .models import REWARD_IDS, Customer, Mirror
 from .serializers import (
     CustomerSerializer,
@@ -30,6 +31,7 @@ from .serializers import (
     PublicMirrorSerializer,
 )
 from .throttles import (
+    client_ip,
     CustomerRegisterThrottle,
     CustomerSpinThrottle,
     PhoneThrottle,
@@ -84,7 +86,7 @@ MAX_STREAMS_PER_IP = 20
 
 def mirror_stream(request):
     # Each open stream holds a worker thread; cap them per network.
-    ip = request.META.get("REMOTE_ADDR", "")
+    ip = client_ip(request)
     key = f"mirror-streams:{ip}"
     cache.add(key, 0, timeout=STREAM_LIFETIME_SECONDS + 60)
     if cache.incr(key) > MAX_STREAMS_PER_IP:
@@ -134,6 +136,10 @@ class CustomerUpload(APIView):
         upload.is_valid(raise_exception=True)
         data = upload.validated_data
         mirror = Mirror.objects.filter(slug=data.get("mirror") or "").first()
+        # Compress photos to ≤200 KB at the highest quality that fits.
+        for field, size in (("poster", POSTER_SIZE), ("selfie", SELFIE_SIZE)):
+            if field in data:
+                data[field] = compressed_photo(data[field], size) or data[field]
         replaced = []
         with transaction.atomic():
             # Registered customers are matched by mobile number, others by session.
@@ -149,10 +155,15 @@ class CustomerUpload(APIView):
                 if customer.poster:
                     replaced.append(customer.poster.name)
                 customer.poster = data["poster"]
+            for thumb in ("poster_thumb", "selfie_thumb"):
+                if getattr(customer, thumb):
+                    replaced.append(getattr(customer, thumb).name)
+            customer.poster_thumb = optimized(data["poster"], THUMB_SIZE, 78) or ""
             if "selfie" in data:
                 if customer.selfie:
                     replaced.append(customer.selfie.name)
                 customer.selfie = data["selfie"]
+                customer.selfie_thumb = optimized(data["selfie"], THUMB_SIZE, 78) or ""
             customer.mirror = mirror
             customer.mirror_name = mirror.name if mirror else data.get("mirror", "")
             if data.get("name"):
@@ -316,8 +327,9 @@ class CustomerViewSet(
         return qs
 
     def perform_destroy(self, instance):
-        instance.poster.delete(save=False)
-        instance.selfie.delete(save=False)
+        for f in (instance.poster, instance.selfie, instance.poster_thumb, instance.selfie_thumb):
+            if f:
+                f.delete(save=False)
         instance.delete()
 
     @action(detail=False, methods=["get"], url_path="export")
@@ -388,7 +400,7 @@ class LockoutLoginView(LoginView):
     lockout_seconds = 15 * 60
 
     def _keys(self):
-        ip = self.request.META.get("REMOTE_ADDR", "")
+        ip = client_ip(self.request)
         user = self.request.POST.get("username", "").strip().lower()[:150]
         return [f"login-fail:ip:{ip}", f"login-fail:user:{user}"]
 
