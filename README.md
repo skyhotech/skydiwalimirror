@@ -114,6 +114,7 @@ Implementation references: [MediaPipe Face Landmarker](https://developers.google
 ```bash
 cd backend
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
+cp .env.example .env                            # then set DJANGO_SECRET_KEY
 .venv/bin/python manage.py migrate
 .venv/bin/python manage.py seed_mirrors        # imports public/frames as mirrors
 .venv/bin/python manage.py createsuperuser

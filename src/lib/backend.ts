@@ -81,17 +81,59 @@ export const PHONE_PATTERN = new RegExp(
   String.raw`^(?!(\d)\1{9}$)(?!\d0{9}$)(?!(\d\d)\2{4}$)(?!(\d{5})\3$)` +
     `(?!(?:${COUNTING.join("|")})$)[6-9]\\d{9}$`,
 );
+// Customer-facing messages; technical details never reach the screen.
+export const ERRORS = {
+  offline: "You're offline. Check the Wi-Fi or mobile data and try again.",
+  unreachable: "Can't reach SKY right now. Please try again in a moment.",
+  timeout: "SKY is taking too long to respond. Please try again.",
+  server: "Something went wrong on our side. Please try again in a moment.",
+  busy: (seconds: number) =>
+    `Too many tries. Please wait ${
+      seconds < 90
+        ? `${seconds} second${seconds === 1 ? "" : "s"}`
+        : `${Math.ceil(seconds / 60)} minutes`
+    } and try again.`,
+};
+const REQUEST_TIMEOUT_MS = 15_000;
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    readonly status = 0,
+  ) {
+    super(message);
+  }
+}
 async function postJson<T>(path: string, body: unknown): Promise<T> {
-  const res = await fetch(`${API}${path}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  const data = await res.json().catch(() => ({}));
+  if (!navigator.onLine) throw new ApiError(ERRORS.offline);
+  let res: Response;
+  try {
+    res = await fetch(`${API}${path}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+  } catch (e) {
+    throw new ApiError(
+      (e as Error).name === "TimeoutError"
+        ? ERRORS.timeout
+        : navigator.onLine
+          ? ERRORS.unreachable
+          : ERRORS.offline,
+    );
+  }
+  const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;
   if (!res.ok) {
-    const detail = Object.values(data as Record<string, unknown>).flat()[0];
-    throw new Error(
-      typeof detail === "string" ? detail : "Could not reach SKY. Try again.",
+    if (res.status === 429) {
+      const wait = Number(res.headers.get("Retry-After")) || 30;
+      throw new ApiError(ERRORS.busy(Math.ceil(wait)), 429);
+    }
+    if (res.status >= 500) throw new ApiError(ERRORS.server, res.status);
+    // Validation errors come back as {field: [message]}; show the first.
+    const detail = Object.values(data).flat()[0];
+    throw new ApiError(
+      typeof detail === "string" ? detail : ERRORS.unreachable,
+      res.status,
     );
   }
   return data as T;
@@ -162,6 +204,23 @@ async function settle(sent: Pending) {
   if (current?.queuedAt === sent.queuedAt)
     await outboxRequest("readwrite", (s) => s.delete(sent.session));
 }
+// What happened to this customer's poster upload, for an on-screen status line.
+export type UploadState = "idle" | "saving" | "saved" | "retrying" | "failed";
+let uploadState: UploadState = "idle";
+const uploadListeners = new Set<() => void>();
+function setUploadState(next: UploadState) {
+  uploadState = next;
+  uploadListeners.forEach((fn) => fn());
+}
+export const getUploadState = () => uploadState;
+/** A new customer starts with no upload status. */
+export const clearUploadState = () => setUploadState("idle");
+export function subscribeUpload(fn: () => void) {
+  uploadListeners.add(fn);
+  return () => {
+    uploadListeners.delete(fn);
+  };
+}
 let flushing = false;
 export async function flushUploads() {
   if (flushing) return;
@@ -175,7 +234,8 @@ export async function flushUploads() {
       try {
         res = await send(item);
       } catch {
-        return; // Offline or backend down: retry later.
+        setUploadState("retrying"); // Offline or backend down: retry later.
+        return;
       }
       // 4xx other than throttling means the upload itself is invalid; drop it
       // rather than retrying forever.
@@ -185,8 +245,13 @@ export async function flushUploads() {
         res.status !== 408 &&
         res.status !== 429;
       if (res.ok || permanent) await settle(item);
-      else return;
+      else {
+        setUploadState("retrying");
+        return;
+      }
+      if (permanent) setUploadState("failed");
     }
+    if (uploadState !== "failed" && pending.length) setUploadState("saved");
   } catch {
     // IndexedDB unavailable; uploadCustomer already sent directly.
   } finally {
@@ -204,6 +269,7 @@ export function startUploadSync() {
   };
 }
 export async function uploadCustomer(data: Upload) {
+  setUploadState("saving");
   try {
     // Keyed by session: a re-export replaces that customer's queued upload.
     await outboxRequest("readwrite", (s) =>
@@ -211,7 +277,8 @@ export async function uploadCustomer(data: Upload) {
     );
   } catch {
     // No on-device storage (e.g. private mode): best-effort direct send.
-    await send(data).catch(() => {});
+    const res = await send(data).catch(() => null);
+    setUploadState(res?.ok ? "saved" : "failed");
     return;
   }
   await flushUploads();

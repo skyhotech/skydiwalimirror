@@ -13,3 +13,9 @@ backend/staticfiles/
 __pycache__/
 graphify-out/
 backend/backups/
+
+# Secrets and local settings (templates: .env.example, backend/.env.example)
+.env
+.env.*
+!.env.example
+!**/.env.example

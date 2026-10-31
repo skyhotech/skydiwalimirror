@@ -168,7 +168,7 @@ export function PhoneGate() {
           <motion.p
             variants={item}
             id="phone-help"
-            className="phone-help"
+            className={`phone-help${error || fake ? " phone-help-error" : ""}`}
             role="alert"
           >
             {error ||

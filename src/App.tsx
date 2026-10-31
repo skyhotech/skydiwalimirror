@@ -1,6 +1,7 @@
 import { lazy, Suspense, useEffect, useState } from "react";
 import { MotionConfig } from "motion/react";
 import { PhoneGate } from "./components/PhoneGate";
+import { OfflineBanner } from "./components/StatusNotices";
 import { registerPhone } from "./lib/backend";
 import { loadFaceModels } from "./lib/faceMatch";
 import { useStudio } from "./lib/store";
@@ -43,6 +44,7 @@ export default function App() {
     return (
       <MotionConfig reducedMotion="user">
         <main id="main" className="mobile-studio">
+          <OfflineBanner />
           <PhoneGate />
         </main>
       </MotionConfig>
@@ -50,6 +52,7 @@ export default function App() {
   return (
     <MotionConfig reducedMotion="user">
       <main id="main" className="mobile-studio">
+        <OfflineBanner />
         <Suspense fallback={<div className="loading">Opening camera…</div>}>
           {["selfie", "selfieReview", "product"].includes(step) ? (
             <CameraStudio key={step === "product" ? "product" : "selfie"} />

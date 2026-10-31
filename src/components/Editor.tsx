@@ -25,6 +25,7 @@ import {
 import { canvasBlob, download } from "../lib/images";
 import { Poster } from "./Poster";
 import { SpinWheel } from "./SpinWheel";
+import { UploadStatus } from "./StatusNotices";
 import { spinPrize } from "../lib/backend";
 import { faceFingerprint } from "../lib/faceMatch";
 import { Templates } from "./Templates";
@@ -434,6 +435,7 @@ export default function Editor() {
         ) : (
           <>
             <Templates />
+            <UploadStatus />
             <button className="text-button next-customer" onClick={s.reset}>
               <UserPlus size={15} /> Next customer
             </button>

@@ -713,3 +713,78 @@ async function savedDraft(page: Page) {
       }),
   );
 }
+
+test("sign-in shows a clear message for each kind of failure", async ({
+  page,
+  context,
+}) => {
+  let mode: "busy" | "server" | "down" = "busy";
+  await page.route("**/api/customers/register/", (route) =>
+    mode === "busy"
+      ? route.fulfill({
+          status: 429,
+          headers: { "Retry-After": "45" },
+          json: { detail: "Request was throttled." },
+        })
+      : mode === "server"
+        ? route.fulfill({ status: 500, body: "<html>Server Error</html>" })
+        : route.abort("connectionrefused"),
+  );
+  await page.addInitScript(() => localStorage.removeItem("sky-customer-phone"));
+  await mockCamera(page);
+  await page.goto("/");
+  await page.getByLabel("Mobile number", { exact: true }).fill("9123456789");
+  const go = page.getByRole("button", { name: "Proceed" });
+  const help = page.locator("#phone-help");
+  await go.click();
+  await expect(help).toHaveText(
+    "Too many tries. Please wait 45 seconds and try again.",
+  );
+  mode = "server";
+  await go.click();
+  await expect(help).toHaveText(
+    "Something went wrong on our side. Please try again in a moment.",
+  );
+  mode = "down";
+  await go.click();
+  await expect(help).toHaveText(
+    "Can't reach SKY right now. Please try again in a moment.",
+  );
+  // Losing the connection shows a banner and a clear message on submit.
+  await context.setOffline(true);
+  await expect(page.locator(".offline-banner")).toBeVisible();
+  await go.click();
+  await expect(help).toHaveText(
+    "You're offline. Check the Wi-Fi or mobile data and try again.",
+  );
+  await context.setOffline(false);
+  await expect(page.locator(".offline-banner")).toBeHidden();
+});
+
+test("after posting, the customer sees whether the poster reached SKY", async ({
+  page,
+}) => {
+  let up = false;
+  await page.route("**/api/customers/", (route) =>
+    up
+      ? route.fulfill({ status: 201, json: { id: 1 } })
+      : route.abort("connectionrefused"),
+  );
+  await mockCamera(page);
+  await takeSelfie(page);
+  await page
+    .getByRole("button", {
+      name: "Capture product and post on Instagram",
+      exact: true,
+    })
+    .click();
+  await spinAndClaim(page);
+  await expect(page.locator(".upload-status")).toHaveText(
+    /will upload automatically/,
+  );
+  up = true;
+  await page.evaluate(() => window.dispatchEvent(new Event("online")));
+  await expect(page.locator(".upload-status")).toHaveText(
+    /Poster saved with SKY/,
+  );
+});

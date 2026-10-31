@@ -2960,8 +2960,9 @@ body {
   text-align: left;
   color: #7a6a5a;
 }
-.phone-field:has(input[aria-invalid="true"]) + .phone-help {
+.phone-help-error {
   color: #b51d47;
+  font-weight: 600;
 }
 .phone-notice {
   display: flex;
@@ -3133,4 +3134,56 @@ body {
   width: 86%;
   min-height: 44px;
   font-size: 14px;
+}
+/* Connection and upload notices. */
+.offline-banner {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: max(10px, env(safe-area-inset-top)) 16px 10px;
+  background: #b51d47;
+  color: #fff;
+  font-size: 13.5px;
+  font-weight: 600;
+  text-align: center;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+}
+.offline-banner svg {
+  flex: none;
+}
+.upload-status {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  border-radius: 10px;
+  font-size: 13px;
+  line-height: 1.4;
+}
+.upload-status svg {
+  flex: none;
+  margin-top: 1px;
+}
+.upload-saving {
+  background: #fff4dc22;
+  color: #e9dcc8;
+}
+.upload-saved {
+  background: #1d8a5a22;
+  color: #7fe0b0;
+}
+.upload-retrying {
+  background: #d6a44726;
+  color: #f3cf7a;
+}
+.upload-failed {
+  background: #b51d4733;
+  color: #ffb3c4;
 }

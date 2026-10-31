@@ -6,6 +6,21 @@ from pathlib import Path
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 
+def _load_env_file(path):
+    """Read KEY=value lines from backend/.env; real environment variables win."""
+    if not path.exists():
+        return
+    for line in path.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        os.environ.setdefault(key.strip(), value.strip().strip("\"'"))
+
+
+_load_env_file(BASE_DIR / ".env")
+
+
 def env_list(name, default=""):
     return [v.strip() for v in os.environ.get(name, default).split(",") if v.strip()]
 
@@ -76,8 +91,8 @@ DATABASES = {
 }
 
 # Where `manage.py backup` writes snapshots, and how many to keep.
-BACKUP_DIR = Path(os.environ.get("BACKUP_DIR", BASE_DIR / "backups"))
-BACKUP_KEEP = int(os.environ.get("BACKUP_KEEP", "14"))
+BACKUP_DIR = Path(os.environ.get("BACKUP_DIR") or BASE_DIR / "backups")
+BACKUP_KEEP = int(os.environ.get("BACKUP_KEEP") or "14")
 
 AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
@@ -107,6 +122,8 @@ CORS_ALLOWED_ORIGINS = env_list(
     "CORS_ALLOWED_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173"
 )
 CORS_URLS_REGEX = r"^/(api|media)/.*$"
+# The studio reads Retry-After to tell customers how long to wait.
+CORS_EXPOSE_HEADERS = ["Retry-After"]
 CSRF_TRUSTED_ORIGINS = env_list("CSRF_TRUSTED_ORIGINS", "")
 
 # --- Security headers and cookies -------------------------------------------
@@ -144,6 +161,7 @@ REST_FRAMEWORK = {
     ],
     "DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.IsAdminUser"],
     "DEFAULT_THROTTLE_CLASSES": ["mirrors.throttles.BurstThrottle"],
+    "EXCEPTION_HANDLER": "mirrors.exceptions.friendly_exception_handler",
     "DEFAULT_THROTTLE_RATES": {
         # The studio checks the version every second and fetches the full
         # list only when it changes; limits allow several tabs per IP.

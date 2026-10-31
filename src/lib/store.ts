@@ -4,7 +4,7 @@ import {
   subscribeTemplates,
   templates,
 } from "../templates";
-import { uploadCustomer } from "./backend";
+import { clearUploadState, uploadCustomer } from "./backend";
 export type Step =
   "welcome" | "selfie" | "selfieReview" | "product" | "edit" | "result";
 export type Adjustment = { x: number; y: number; zoom: number };
@@ -143,6 +143,7 @@ export const useStudio = create<State>((set, get) => ({
     release(get().selfie);
     get().products.forEach(release);
     writePhone(null);
+    clearUploadState();
     set({
       phone: null,
       selfie: null,

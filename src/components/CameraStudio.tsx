@@ -26,6 +26,7 @@ import { getTemplate, templates } from "../templates";
 import { Poster } from "./Poster";
 import { Templates } from "./Templates";
 import { SpinWheel } from "./SpinWheel";
+import { UploadStatus } from "./StatusNotices";
 import type { Reward } from "../lib/rewards";
 import { spinPrize } from "../lib/backend";
 import { faceFingerprint } from "../lib/faceMatch";
@@ -405,6 +406,7 @@ export default function CameraStudio() {
             </a>
           </div>
           <p role="status">{captionMessage}</p>
+          <UploadStatus />
           {s.products.length < MAX_PRODUCTS && (
             <button
               className="text-button"
