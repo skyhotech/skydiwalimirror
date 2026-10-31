@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Installed as /usr/local/bin/skymirror-manage: runs manage.py as the service
+# user with the production settings, e.g. `skymirror-manage createsuperuser`.
+cd /opt/skymirror/backend
+exec sudo -u skymirror bash -c 'set -a; . /etc/skymirror/.env; set +a; exec /opt/skymirror/venv/bin/python manage.py "$@"' _ "$@"

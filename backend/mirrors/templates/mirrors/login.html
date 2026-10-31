@@ -12,6 +12,9 @@
     label { display: block; font-size: 13px; margin: 12px 0 6px; color: #d9c7ad; }
     input { width: 100%; box-sizing: border-box; padding: 10px 12px; border-radius: 10px; border: 1px solid #4a3a28; background: #17120d; color: inherit; font-size: 15px; }
     button { margin-top: 20px; width: 100%; padding: 11px; border: 0; border-radius: 10px; background: #d6a447; color: #17120d; font-weight: 700; font-size: 15px; cursor: pointer; }
+    .password { position: relative; }
+    .password input { padding-right: 64px; }
+    .password button { position: absolute; top: 50%; right: 6px; transform: translateY(-50%); margin: 0; width: auto; padding: 5px 8px; background: none; color: #e8bd62; font-size: 13px; font-weight: 600; }
     .error { color: #ff8a8a; font-size: 14px; }
   </style>
 </head>
@@ -24,9 +27,23 @@
     <label for="id_username">Username</label>
     <input id="id_username" name="username" autocomplete="username" required autofocus>
     <label for="id_password">Password</label>
-    <input id="id_password" name="password" type="password" autocomplete="current-password" required>
+    <div class="password">
+      <input id="id_password" name="password" type="password" autocomplete="current-password" required>
+      <button type="button" id="toggle-password" aria-controls="id_password" aria-pressed="false" aria-label="Show password">Show</button>
+    </div>
     <input type="hidden" name="next" value="{{ next|default:'/sky/mirror/admin/' }}">
     <button type="submit">Sign in</button>
   </form>
+  <script>
+    const password = document.getElementById("id_password");
+    const toggle = document.getElementById("toggle-password");
+    toggle.addEventListener("click", () => {
+      const show = password.type === "password";
+      password.type = show ? "text" : "password";
+      toggle.textContent = show ? "Hide" : "Show";
+      toggle.setAttribute("aria-pressed", String(show));
+      toggle.setAttribute("aria-label", show ? "Hide password" : "Show password");
+    });
+  </script>
 </body>
 </html>

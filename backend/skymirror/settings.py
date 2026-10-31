@@ -79,7 +79,8 @@ WSGI_APPLICATION = "skymirror.wsgi.application"
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.sqlite3",
-        "NAME": BASE_DIR / "db.sqlite3",
+        # SQLITE_PATH keeps the database outside the deployed code on servers.
+        "NAME": Path(os.environ.get("SQLITE_PATH") or BASE_DIR / "db.sqlite3"),
         "OPTIONS": {
             # WAL lets kiosks read while another uploads; IMMEDIATE + timeout
             # make concurrent writes wait instead of failing "database is locked".
@@ -89,6 +90,19 @@ DATABASES = {
         },
     }
 }
+# Production uses local MySQL; credentials come only from the environment.
+if os.environ.get("MYSQL_DATABASE"):
+    DATABASES["default"] = {
+        "ENGINE": "django.db.backends.mysql",
+        "NAME": os.environ["MYSQL_DATABASE"],
+        "USER": os.environ.get("MYSQL_USER", ""),
+        "PASSWORD": os.environ.get("MYSQL_PASSWORD", ""),
+        "HOST": os.environ.get("MYSQL_HOST", "127.0.0.1"),
+        "PORT": os.environ.get("MYSQL_PORT", "3306"),
+        "CONN_MAX_AGE": 60,
+        "CONN_HEALTH_CHECKS": True,
+        "OPTIONS": {"charset": "utf8mb4"},
+    }
 
 # Where `manage.py backup` writes snapshots, and how many to keep.
 BACKUP_DIR = Path(os.environ.get("BACKUP_DIR") or BASE_DIR / "backups")
@@ -109,7 +123,7 @@ USE_TZ = True
 STATIC_URL = "static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
 MEDIA_URL = "/media/"
-MEDIA_ROOT = BASE_DIR / "media"
+MEDIA_ROOT = Path(os.environ.get("MEDIA_ROOT") or BASE_DIR / "media")
 DATA_UPLOAD_MAX_MEMORY_SIZE = 25 * 1024 * 1024
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
@@ -121,7 +135,9 @@ LOGIN_REDIRECT_URL = "mirror-dashboard"
 CORS_ALLOWED_ORIGINS = env_list(
     "CORS_ALLOWED_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173"
 )
-CORS_URLS_REGEX = r"^/(api|media)/.*$"
+# Lets every Vercel preview/production URL of the studio call the API.
+CORS_ALLOWED_ORIGIN_REGEXES = env_list("CORS_ALLOWED_ORIGIN_REGEXES", "")
+CORS_URLS_REGEX =r"^/(api|media)/.*$"
 # The studio reads Retry-After to tell customers how long to wait.
 CORS_EXPOSE_HEADERS = ["Retry-After"]
 CSRF_TRUSTED_ORIGINS = env_list("CSRF_TRUSTED_ORIGINS", "")
@@ -162,6 +178,9 @@ REST_FRAMEWORK = {
     "DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.IsAdminUser"],
     "DEFAULT_THROTTLE_CLASSES": ["mirrors.throttles.BurstThrottle"],
     "EXCEPTION_HANDLER": "mirrors.exceptions.friendly_exception_handler",
+    # Behind Caddy/nginx every request comes from 127.0.0.1; trust that many
+    # proxies' X-Forwarded-For so rate limits apply per visitor, not globally.
+    "NUM_PROXIES": int(os.environ.get("TRUSTED_PROXIES") or 0) or None,
     "DEFAULT_THROTTLE_RATES": {
         # The studio checks the version every second and fetches the full
         # list only when it changes; limits allow several tabs per IP.

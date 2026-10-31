@@ -1,6 +1,22 @@
 import re
 
+from rest_framework.settings import api_settings
 from rest_framework.throttling import SimpleRateThrottle
+
+
+def client_ip(request):
+    """The visitor's real IP, also behind a reverse proxy such as Caddy.
+
+    With TRUSTED_PROXIES=N the address N hops from the end of X-Forwarded-For
+    is used (the one our own proxy saw), so clients can't spoof it. Matches
+    DRF's throttle identity (NUM_PROXIES)."""
+    proxies = api_settings.NUM_PROXIES
+    forwarded = request.META.get("HTTP_X_FORWARDED_FOR")
+    if proxies and forwarded:
+        hops = [a.strip() for a in forwarded.split(",") if a.strip()]
+        if hops:
+            return hops[-min(proxies, len(hops))]
+    return request.META.get("REMOTE_ADDR", "")
 
 
 class ScopedIPThrottle(SimpleRateThrottle):

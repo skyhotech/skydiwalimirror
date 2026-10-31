@@ -307,7 +307,7 @@
       ? s.top_mirrors.map((m) => `<div class="row" style="justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--line)"><span>${esc(m.name)}</span><b>${m.n}</b></div>`).join("")
       : `<p class="hint">No mirrors yet.</p>`;
     $("#s-recent").innerHTML = recent.results.length
-      ? recent.results.map((c) => `<img src="${esc(c.poster)}" data-full="${esc(c.poster)}" alt="${esc(c.name || "Customer")}" loading="lazy">`).join("")
+      ? recent.results.filter((c) => c.poster).map((c) => `<img src="${esc(c.poster_thumb || c.poster)}" data-full="${esc(c.poster)}" alt="${esc(c.name || "Customer")}" loading="lazy" decoding="async">`).join("")
       : `<p class="hint">No selfies yet.</p>`;
   }
 
@@ -500,8 +500,8 @@
       const el = document.createElement("div");
       el.className = "cust";
       el.innerHTML = `<div class="imgs">
-          ${c.selfie ? `<img src="${esc(c.selfie)}" data-full="${esc(c.selfie)}" alt="Selfie" loading="lazy">` : `<div></div>`}
-          <img src="${esc(c.poster)}" data-full="${esc(c.poster)}" alt="Poster" loading="lazy">
+          ${c.selfie ? `<img src="${esc(c.selfie_thumb || c.selfie)}" data-full="${esc(c.selfie)}" alt="Selfie" loading="lazy" decoding="async">` : `<div></div>`}
+          ${c.poster ? `<img src="${esc(c.poster_thumb || c.poster)}" data-full="${esc(c.poster)}" alt="Poster" loading="lazy" decoding="async">` : `<div></div>`}
         </div>
         <div class="info"><b>${esc(c.name || "Guest #" + c.id)}</b>
           ${c.reward ? `<span class="pill">🎁 ${esc(rewardLabel(c.reward))}</span>` : ""}

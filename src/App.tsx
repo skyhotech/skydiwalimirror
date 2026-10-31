@@ -25,10 +25,12 @@ export default function App() {
       })
       .catch(() => {});
   }, []);
-  // Warm up the face-check models while the customer takes photos.
+  // Warm up the face-check models (≈8 MB, needed only at the spin) once the
+  // selfie is taken, so they never compete with the first screen's frame.
+  const hasSelfie = useStudio((s) => Boolean(s.selfie));
   useEffect(() => {
-    if (phone) void loadFaceModels().catch(() => {});
-  }, [phone]);
+    if (phone && hasSelfie) void loadFaceModels().catch(() => {});
+  }, [phone, hasSelfie]);
   useEffect(() => {
     let active = true;
     void initializePhotoStorage().then(() => {

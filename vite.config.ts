@@ -5,6 +5,17 @@ export default defineConfig({
   base: "./",
   plugins: [react(), tailwindcss()],
   server: {
+    // The Django backend (database, uploaded photos) and build/test output
+    // live in this folder too; changes there must never reload the studio.
+    watch: {
+      ignored: [
+        "**/backend/**",
+        "**/dist/**",
+        "**/test-results/**",
+        "**/playwright-report/**",
+        "**/graphify-out/**",
+      ],
+    },
     proxy: {
       "/api": "http://127.0.0.1:8000",
       "/media": "http://127.0.0.1:8000",

@@ -27,10 +27,10 @@ class PublicMirrorSerializer(serializers.ModelSerializer):
         ]
 
     def get_artwork(self, obj):
-        # Version query busts the studio's image cache when artwork changes.
-        url = f"{obj.artwork.url}?v={int(obj.updated_at.timestamp())}"
-        request = self.context.get("request")
-        return request.build_absolute_uri(url) if request else url
+        # Relative, so it resolves against whatever site serves the studio
+        # (Caddy, Vite proxy) instead of the host Django happened to see.
+        # The version query busts the studio's image cache when artwork changes.
+        return f"{obj.artwork.url}?v={int(obj.updated_at.timestamp())}"
 
     def to_representation(self, obj):
         data = super().to_representation(obj)
@@ -76,6 +76,7 @@ class CustomerSerializer(serializers.ModelSerializer):
             "id", "session", "name", "phone", "mirror", "mirror_slug",
             "mirror_name", "reward", "selfie", "poster", "created_at", "updated_at",
             "consent_at", "has_face", "repeat_of", "repeat_of_phone",
+            "poster_thumb", "selfie_thumb",
         ]
         read_only_fields = fields
 
