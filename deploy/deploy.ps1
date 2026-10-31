@@ -27,9 +27,9 @@ try {
     $secret = & $Py -c "import secrets; print(secrets.token_urlsafe(50))"
     @(
       "DJANGO_SECRET_KEY=$secret", 'DJANGO_DEBUG=0', 'DJANGO_SSL_REDIRECT=0',
-      'MEDIA_ROOT=D:/sky/diwali/media', 'DJANGO_ALLOWED_HOSTS=diwali.skymobile.in',
+      'MEDIA_ROOT=D:/sky/diwali/media', 'DJANGO_ALLOWED_HOSTS=.skymobile.in',
       'CORS_ALLOWED_ORIGINS=https://diwali.skymobile.in',
-      'CSRF_TRUSTED_ORIGINS=https://diwali.skymobile.in'
+      'CSRF_TRUSTED_ORIGINS=https://*.skymobile.in'
     ) | Set-Content -Encoding ascii "$Backend\.env"
   }
   $firstInstall = -not (Test-Path "$Backend\db.sqlite3")
