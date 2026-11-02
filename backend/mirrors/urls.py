@@ -18,6 +18,7 @@ api_urlpatterns = [
     path("customers/spin/", views.CustomerSpin.as_view(), name="customer-spin"),
     path("branches/<slug:slug>/", views.PublicBranch.as_view(), name="public-branch"),
     path("admin/stats/", views.stats, name="admin-stats"),
+    path("admin/backup.sql", views.database_backup, name="admin-backup"),
     path("admin/", include(router.urls)),
 ]
 
