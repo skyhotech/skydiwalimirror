@@ -1,6 +1,11 @@
 <!doctype html>
 <html lang="en">
   <head>
+    <script>
+      // The studio moved: send visitors of the old address to the new one.
+      if (location.hostname === "skydiwalimirror.vercel.app")
+        location.replace("https://dreamdiwali-skymobile-in.vercel.app" + location.pathname + location.search + location.hash);
+    </script>
     <meta charset="UTF-8" />
     <meta
       name="viewport"
