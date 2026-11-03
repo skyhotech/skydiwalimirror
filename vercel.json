@@ -1,5 +1,13 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
+  "redirects": [
+    {
+      "source": "/:path*",
+      "has": [{ "type": "host", "value": "skydiwalimirror.vercel.app" }],
+      "destination": "https://dreamdiwali-skymobile-in.vercel.app/:path*",
+      "permanent": false
+    }
+  ],
   "rewrites": [
     { "source": "/sky/(.*)", "destination": "https://222.167.207.123/sky/$1" },
     { "source": "/api/(.*)", "destination": "https://222.167.207.123/api/$1" },
