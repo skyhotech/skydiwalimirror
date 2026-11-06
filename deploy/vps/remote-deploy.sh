@@ -25,7 +25,7 @@ manage check --deploy --fail-level ERROR
 
 sudo /usr/bin/systemctl restart skymirror
 for i in $(seq 1 30); do
-  if curl -fs -o /dev/null -H 'Host: 87.232.72.141' -H 'X-Forwarded-Proto: https' http://127.0.0.1:8000/api/mirrors/version/; then
+  if curl -fs -o /dev/null -H 'Host: 222.167.207.123' -H 'X-Forwarded-Proto: https' http://127.0.0.1:8000/api/mirrors/version/; then
     echo "Backend is up."
     exit 0
   fi
