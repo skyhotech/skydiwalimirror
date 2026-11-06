@@ -12,7 +12,7 @@
 	}
 }
 
-222.167.207.123, 222-167-207-123.sslip.io {
+87.232.72.141 {
 	tls {
 		issuer acme {
 			profile shortlived
