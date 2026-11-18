@@ -11,6 +11,7 @@ router.register("branches", views.BranchViewSet, basename="admin-branch")
 router.register("spin-items", views.SpinItemViewSet, basename="admin-spin-item")
 
 api_urlpatterns = [
+    path("spin-items/<slug:slug>/image/<str:filename>/", views.spin_item_image, name="spin-item-image"),
     path("mirrors/", views.PublicMirrorList.as_view(), name="public-mirrors"),
     path("mirrors/stream/", views.mirror_stream, name="public-mirrors-stream"),
     path("mirrors/version/", views.PublicMirrorVersion.as_view(), name="public-mirrors-version"),

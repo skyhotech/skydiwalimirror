@@ -1,6 +1,7 @@
 from decimal import Decimal
 from pathlib import Path
 from django.conf import settings
+from django.urls import reverse
 from rest_framework import serializers
 
 import re
@@ -135,6 +136,14 @@ BUILT_IN_GIFTS = {
 }
 
 
+def spin_item_image(item):
+    if item.image:
+        return reverse("spin-item-image", kwargs={"slug": item.slug, "filename": Path(item.image.name).name})
+    if item.slug in BUILT_IN_GIFTS:
+        return f"/static/mirrors/rewards/{item.slug}.webp"
+    return ""
+
+
 class SpinItemSerializer(serializers.ModelSerializer):
     def validate(self, data):
         low = data.get("min_bill", getattr(self.instance, "min_bill", 0))
@@ -147,10 +156,8 @@ class SpinItemSerializer(serializers.ModelSerializer):
         return _limit_size(image) if image else image
 
     def to_representation(self, obj):
-        data = _local_images(super().to_representation(obj))
-        # The starting gifts use the pictures that ship with the code.
-        if not data["image"] and obj.slug in BUILT_IN_GIFTS:
-            data["image"] = f"/static/mirrors/rewards/{obj.slug}.webp"
+        data = super().to_representation(obj)
+        data["image"] = spin_item_image(obj)
         return data
 
     class Meta:
@@ -162,7 +169,7 @@ class SpinItemSerializer(serializers.ModelSerializer):
 def wheel_items(items):
     """What the customer's wheel shows."""
     return [
-        {"id": i.slug, "label": i.name, "image": i.image.url if i.image else ""}
+        {"id": i.slug, "label": i.name, "image": spin_item_image(i)}
         for i in items
     ]
 

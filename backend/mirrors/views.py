@@ -1622,6 +1622,25 @@ def invoice_media(request, filename):
 
 
 @require_safe
+def spin_item_image(request, slug, filename):
+    """Serve only artwork currently assigned to the requested wheel item."""
+    extension = filename.rpartition(".")[2].lower()
+    content_type = {"jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png", "webp": "image/webp"}.get(extension)
+    if not content_type or not re.fullmatch(r"[a-zA-Z0-9_-]+\.(?:jpe?g|png|webp)", filename, flags=re.IGNORECASE):
+        return HttpResponse(status=404)
+    item = SpinItem.objects.filter(slug=slug, image=f"customers/{filename}").only("image").first()
+    if not item:
+        return HttpResponse(status=404)
+    try:
+        response = FileResponse(item.image.open("rb"), content_type=content_type)
+    except FileNotFoundError:
+        return HttpResponse(status=404)
+    response["Cache-Control"] = "no-cache"
+    response["X-Content-Type-Options"] = "nosniff"
+    return response
+
+
+@require_safe
 def customer_media(request, filename):
     """Staff may view customer images; a bearer token may read its own poster."""
     path = f"customers/{filename}"

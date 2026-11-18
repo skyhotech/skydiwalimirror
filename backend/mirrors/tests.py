@@ -73,6 +73,34 @@ class BranchFlowTests(TestCase):
         self.branch = Branch.objects.create(name="Anna Nagar")
         self.staff = User.objects.create_user("staff@sky.in", password="x", is_staff=True)
 
+    def test_replacing_spin_item_image_updates_admin_and_public_wheel_urls(self):
+        from rest_framework.test import APIClient
+
+        from .serializers import wheel_items
+
+        item = SpinItem.objects.create(name="Wheel gift", image=jpeg("gift.jpg"))
+        endpoint = f"/api/admin/spin-items/{item.pk}/"
+        self.client.force_login(self.staff)
+        previous_url = self.client.get(endpoint).json()["image"]
+        admin = APIClient()
+        admin.force_authenticate(user=self.staff)
+        response = admin.patch(endpoint, {"image": jpeg("gift.jpg")}, format="multipart")
+        self.assertEqual(response.status_code, 200, response.data)
+        current_url = response.json()["image"]
+        self.assertNotEqual(current_url, previous_url)
+        self.assertEqual(self.client.get(endpoint).json()["image"], current_url)
+        item.refresh_from_db()
+        self.assertEqual(wheel_items([item])[0]["image"], current_url)
+
+        self.client.logout()
+        response = self.client.get(current_url)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["Content-Type"], "image/jpeg")
+        self.assertTrue(b"".join(response.streaming_content).startswith(b"\xff\xd8"))
+        self.assertEqual(self.client.get(previous_url).status_code, 404)
+        self.assertEqual(self.client.get(item.image.url).status_code, 403)
+        self.assertEqual(self.client.get(current_url.replace(item.slug, "different-gift")).status_code, 404)
+
     def check(self, phone="9845011111", imei=IMEI, **extra):
         body = {
             "name": "Asha", "phone": phone, "product_details": "Phone 15", "imei": imei,
