@@ -33,7 +33,18 @@ test("the manager form fills a PDF and validates the submitted values", async ({
 
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "Customer details" })).toBeVisible();
-  await page.locator("#m-image").setInputFiles({
+  const fieldStyles = await page.locator(".manager-card > .phone-field").evaluateAll((fields) =>
+    fields.map((field) => {
+      const style = getComputedStyle(field);
+      return [style.height, style.borderColor, style.borderRadius, style.backgroundColor];
+    }),
+  );
+  expect(fieldStyles).toHaveLength(7);
+  expect(fieldStyles.every((style) => JSON.stringify(style) === JSON.stringify(fieldStyles[0]))).toBe(true);
+  const upload = page.getByLabel("Invoice PDF");
+  await upload.focus();
+  await expect(upload).toBeFocused();
+  await upload.setInputFiles({
     name: "invoice.pdf", mimeType: "application/pdf", buffer: Buffer.from("%PDF-1.4"),
   });
   await expect(page.getByLabel("Customer name")).toHaveValue("Asha Example");

@@ -240,20 +240,28 @@ export function ManagerIntake() {
     setLink("");
     setSent(false);
   }
-  const field = (
+  const input = (
     id: keyof typeof EMPTY,
-    label: string,
-    props: React.InputHTMLAttributes<HTMLInputElement> = {},
+    { prefix, ...props }: React.InputHTMLAttributes<HTMLInputElement> & { prefix?: string } = {},
   ) => (
-    <>
-      <label htmlFor={`m-${id}`}>{label}</label>
+    <div className="phone-field">
+      {prefix && <span aria-hidden="true">{prefix}</span>}
       <input
         id={`m-${id}`}
-        className="manager-input"
         value={form[id]}
         onChange={(e) => change(id, e.target.value)}
         {...props}
       />
+    </div>
+  );
+  const field = (
+    id: keyof typeof EMPTY,
+    label: string,
+    props?: Parameters<typeof input>[1],
+  ) => (
+    <>
+      <label htmlFor={`m-${id}`}>{label}</label>
+      {input(id, props)}
     </>
   );
   return (
@@ -303,20 +311,13 @@ export function ManagerIntake() {
           </div>
           <h1 className="phone-title">Customer details</h1>
           {field("name", "Customer name", { maxLength: 80, autoComplete: "off" })}
-          <label htmlFor="m-phone">Customer contact number</label>
-          <div className="phone-field">
-            <span>+91</span>
-            <input
-              id="m-phone"
-              type="tel"
-              inputMode="numeric"
-              maxLength={10}
-              value={form.phone}
-              onChange={(e) =>
-                change("phone", e.target.value.replace(/\D/g, "").slice(0, 10))
-              }
-            />
-          </div>
+          {field("phone", "Customer contact number", {
+            prefix: "+91",
+            type: "tel",
+            inputMode: "numeric",
+            maxLength: 10,
+            onChange: (e) => change("phone", e.target.value.replace(/\D/g, "").slice(0, 10)),
+          })}
           {field("email", "Mail ID (optional)", {
             type: "email",
             inputMode: "email",
@@ -328,17 +329,12 @@ export function ManagerIntake() {
             <>
             <label htmlFor="m-imei">IMEI number</label>
             <div className="manager-row">
-              <input
-                id="m-imei"
-                className="manager-input"
-                maxLength={15}
-                inputMode="numeric"
-                placeholder="Type or scan"
-                value={form.imei}
-                onChange={(e) =>
-                  change("imei", e.target.value.replace(/\D/g, ""))
-                }
-              />
+              {input("imei", {
+                maxLength: 15,
+                inputMode: "numeric",
+                placeholder: "Type or scan",
+                onChange: (e) => change("imei", e.target.value.replace(/\D/g, "")),
+              })}
               <button
                 type="button"
                 className="manager-scan"
@@ -358,31 +354,30 @@ export function ManagerIntake() {
           )}
           {field("invoice", "Invoice number", { maxLength: 40 })}
           {field("bill", "Bill value (₹)", {
+            prefix: "₹",
             type: "number",
             inputMode: "decimal",
             min: 1,
             step: "0.01",
           })}
           <label htmlFor="m-image">Invoice PDF</label>
-          <div className="manager-row">
-            <label className="manager-scan manager-pick">
-              <Upload size={18} aria-hidden="true" />
-              Upload image / PDF
-              <input
-                id="m-image"
-                type="file"
-                accept="application/pdf,.pdf,image/*"
-                disabled={busy}
-                hidden
-                onChange={(e) => {
-                  if (e.target.files?.[0]) void pick(e.target.files[0]);
-                  e.target.value = "";
-                }}
-              />
-            </label>
+          <div className="phone-field manager-file">
+            <span aria-hidden="true"><Upload size={18} /></span>
+            <span>Upload image / PDF</span>
+            <input
+              id="m-image"
+              type="file"
+              accept="application/pdf,.pdf,image/*"
+              disabled={busy}
+              aria-describedby={image ? "m-image-status" : undefined}
+              onChange={(e) => {
+                if (e.target.files?.[0]) void pick(e.target.files[0]);
+                e.target.value = "";
+              }}
+            />
           </div>
           {image && (
-            <p className="phone-help" role="status">
+            <p id="m-image-status" className="phone-help" role="status">
               {filling
                 ? "Reading invoice and filling the details…"
                 : `Selected: ${image.name}. Check the details above.`}

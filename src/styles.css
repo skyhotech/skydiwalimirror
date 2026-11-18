@@ -2972,6 +2972,7 @@ body {
   font-weight: 700;
 }
 .phone-field {
+  --phone-field-height: 54px;
   position: relative;
   display: flex;
   align-items: center;
@@ -2999,7 +3000,7 @@ body {
 .phone-field input {
   flex: 1;
   min-width: 0;
-  height: 54px;
+  height: var(--phone-field-height);
   padding: 0 14px;
   border: 0;
   outline: 0;
@@ -3008,6 +3009,41 @@ body {
   /* 16px+ stops iOS from zooming into the field. */
   font-size: clamp(18px, 5.4vw, 20px);
   letter-spacing: 1px;
+}
+.manager-card > .phone-field,
+.manager-card > .manager-row {
+  margin-bottom: 12px;
+}
+.manager-card .manager-row {
+  display: flex;
+  gap: 8px;
+}
+.manager-card .manager-row > .phone-field {
+  flex: 1;
+  min-width: 0;
+}
+.manager-card .manager-scan {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.manager-file > span:nth-child(2) {
+  display: flex;
+  align-items: center;
+  min-height: var(--phone-field-height);
+  padding: 0 14px;
+  font-size: 16px;
+}
+.phone-field.manager-file input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+}
+.phone-field.manager-file input:disabled {
+  cursor: wait;
 }
 .phone-valid {
   display: grid;
@@ -3061,8 +3097,8 @@ body {
     margin-bottom: 10px;
     font-size: 13.5px;
   }
-  .phone-field input {
-    height: 48px;
+  .phone-field {
+    --phone-field-height: 48px;
   }
   .phone-help {
     margin: 6px 0 10px;
