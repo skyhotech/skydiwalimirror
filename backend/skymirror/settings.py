@@ -1,4 +1,4 @@
-"""Django settings for the SKY Diwali mirror backend."""
+"""Django settings for the SKY Karthigai Deepam mirror backend."""
 
 import os
 from pathlib import Path
@@ -18,7 +18,11 @@ def _load_env_file(path):
         os.environ.setdefault(key.strip(), value.strip().strip("\"'"))
 
 
-_load_env_file(BASE_DIR / ".env")
+IS_TEST_SETTINGS = os.environ.get("DJANGO_SETTINGS_MODULE") in {
+    "skymirror.test_settings", "skymirror.mysql_test_settings",
+}
+if not IS_TEST_SETTINGS:
+    _load_env_file(BASE_DIR / ".env")
 
 
 def env_list(name, default=""):
@@ -27,11 +31,11 @@ def env_list(name, default=""):
 
 DEV_SECRET_KEY = "dev-only-insecure-key-change-me"
 SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY", DEV_SECRET_KEY)
-DEBUG = os.environ.get("DJANGO_DEBUG", "1") == "1"
-if not DEBUG and SECRET_KEY == DEV_SECRET_KEY:
+DEBUG = IS_TEST_SETTINGS or os.environ.get("DJANGO_DEBUG", "1") == "1"
+if not DEBUG and (SECRET_KEY in (DEV_SECRET_KEY, "change-me", "") or len(SECRET_KEY) < 50):
     from django.core.exceptions import ImproperlyConfigured
 
-    raise ImproperlyConfigured("Set DJANGO_SECRET_KEY before running with DJANGO_DEBUG=0.")
+    raise ImproperlyConfigured("Set a random DJANGO_SECRET_KEY of at least 50 characters before running with DJANGO_DEBUG=0.")
 ALLOWED_HOSTS = env_list("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1,0.0.0.0")
 
 INSTALLED_APPS = [
@@ -47,6 +51,7 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
+    "skymirror.diagnostics.RequestDiagnosticsMiddleware",
     "corsheaders.middleware.CorsMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
@@ -55,6 +60,7 @@ MIDDLEWARE = [
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
+    "mirrors.middleware.SpinOnceMiddleware",
 ]
 
 ROOT_URLCONF = "skymirror.urls"
@@ -133,7 +139,7 @@ DATA_UPLOAD_MAX_MEMORY_SIZE = 25 * 1024 * 1024
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 LOGIN_URL = "mirror-login"
-DJANGO_ADMIN_ENABLED = os.environ.get("DJANGO_ADMIN_ENABLED", "1") == "1"
+DJANGO_ADMIN_ENABLED = os.environ.get("DJANGO_ADMIN_ENABLED", "1" if DEBUG else "0") == "1"
 LOGIN_REDIRECT_URL = "mirror-dashboard"
 
 # The selfie studio runs on Vite (5173) in development.
@@ -144,7 +150,7 @@ CORS_ALLOWED_ORIGINS = env_list(
 CORS_ALLOWED_ORIGIN_REGEXES = env_list("CORS_ALLOWED_ORIGIN_REGEXES", "")
 CORS_URLS_REGEX =r"^/(api|media)/.*$"
 # The studio reads Retry-After to tell customers how long to wait.
-CORS_EXPOSE_HEADERS = ["Retry-After"]
+CORS_EXPOSE_HEADERS = ["Retry-After", "X-Request-ID", "Server-Timing"]
 CSRF_TRUSTED_ORIGINS = env_list("CSRF_TRUSTED_ORIGINS", "")
 if DEBUG:
     # `npm run dev` serves the dashboard through Vite's proxy on :5173.
@@ -187,11 +193,15 @@ REST_FRAMEWORK = {
         "rest_framework.authentication.SessionAuthentication",
     ],
     "DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.IsAdminUser"],
-    "DEFAULT_THROTTLE_CLASSES": ["mirrors.throttles.BurstThrottle"],
+    "DEFAULT_THROTTLE_CLASSES": [
+        "mirrors.throttles.BurstThrottle", "mirrors.throttles.RepeatThrottle",
+        "mirrors.throttles.NetworkCeilingThrottle",
+    ],
     "EXCEPTION_HANDLER": "mirrors.exceptions.friendly_exception_handler",
     # Behind Caddy/nginx every request comes from 127.0.0.1; trust that many
     # proxies' X-Forwarded-For so rate limits apply per visitor, not globally.
-    "NUM_PROXIES": int(os.environ.get("TRUSTED_PROXIES") or 0) or None,
+    # 0 (not None) when unset: None would trust a client's X-Forwarded-For.
+    "NUM_PROXIES": int(os.environ.get("TRUSTED_PROXIES") or 0),
     "DEFAULT_THROTTLE_RATES": {
         # The studio checks the version every second and fetches the full
         # list only when it changes; limits allow several tabs per IP.
@@ -200,10 +210,39 @@ REST_FRAMEWORK = {
         # Several kiosks can share one IP; failed uploads also retry from the outbox.
         "customer_upload": "120/m",
         "customer_register": "60/m",
-        # New spins per network (a busy kiosk) and per mobile number.
+        "manager": "60/m",
+        # One of each change per visitor every 5 seconds (double taps).
+        "repeat": "1/5s",
+        # New spins per network (a busy kiosk).
         "customer_spin": "600/h",  # per network: a store shares one Wi-Fi address
-        "customer_phone": "20/h",
-        # Ceiling for every other API call per IP.
+        # Ceiling for every other API call per device (IP + browser).
         "burst": "600/m",
+        # All devices on one network together (a busy store on one Wi-Fi).
+        "network": "6000/m",
     },
 }
+
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {"json": {"()": "skymirror.diagnostics.JsonFormatter"}},
+    "handlers": {"diagnostics": {"class": "logging.StreamHandler", "formatter": "json"}},
+    "loggers": {"skymirror.requests": {"handlers": ["diagnostics"], "level": "WARNING", "propagate": False}},
+}
+
+# Opt-in only: aggregate execution time/counts, never SQL text or parameters.
+# Includes middleware/view queries before response headers, not streaming bodies.
+DIAGNOSTICS_DB_TIMING = os.environ.get("DIAGNOSTICS_DB_TIMING", "0") == "1"
+
+# --- Security hardening ------------------------------------------------------
+SECURE_BROWSER_XSS_FILTER = True
+# Permissions-Policy: deny browser features the studio never uses.
+PERMISSIONS_POLICY = {
+    "camera": ["self"],
+    "microphone": [],
+    "geolocation": [],
+    "payment": [],
+    "usb": [],
+}
+# CSRF cookie lives as long as the browser session max.
+CSRF_COOKIE_AGE = 31449600  # 1 year — CSRF token is not a secret

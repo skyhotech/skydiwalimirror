@@ -1,0 +1,14 @@
+# Installed as /etc/systemd/system/skymirror-warmup.timer
+# Fires skymirror-warmup.service every 30 seconds to keep all 6 Gunicorn
+# workers warm and MySQL persistent connections alive.
+[Unit]
+Description=SKY Mirror worker warmup timer
+After=skymirror.service
+
+[Timer]
+OnBootSec=60s
+OnUnitActiveSec=30s
+AccuracySec=5s
+
+[Install]
+WantedBy=timers.target

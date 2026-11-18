@@ -3,6 +3,13 @@
 # runs out, the kernel kills the app first (systemd restarts it in 3 s) and
 # MySQL last, so data stays safe. Run once with sudo; safe to re-run.
 set -euo pipefail
+# This legacy profile would cap MySQL below its current measured working set
+# on the 8-GB VPS. Refuse before writing files or restarting any service.
+memory_kb=$(awk '/^MemTotal:/ {print $2}' /proc/meminfo)
+if [ -z "$memory_kb" ] || [ "$memory_kb" -gt 1572864 ]; then
+  echo 'Legacy 1-GB profile refused: use the reviewed resource plan for this host.' >&2
+  exit 2
+fi
 limit() {  # unit, MemoryMax, OOMScoreAdjust
   install -d "/etc/systemd/system/$1.d"
   printf '[Service]\nMemoryMax=%s\nOOMScoreAdjust=%s\nRestart=always\nRestartSec=3\n' "$2" "$3" \

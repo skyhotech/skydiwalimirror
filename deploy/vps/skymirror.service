@@ -10,19 +10,28 @@ Group=skymirror
 UMask=0007
 WorkingDirectory=/opt/skymirror/backend
 EnvironmentFile=/etc/skymirror/.env
-# 1 vCPU / 1 GB: two workers keep one serving while the other compresses a
-# photo; threads cover slow uploads. --preload shares the loaded code between
-# workers, and they recycle to cap memory growth.
+# 6 vCPU / 7.8 GB RAM: 6 workers × 4 threads = 24 concurrent slots.
+# --preload shares Django app memory across workers (copy-on-write).
+# --keep-alive 5 reuses HTTP/1.1 connections from Caddy's upstream pool.
+# max-requests recycles workers to shed any per-request memory growth.
 ExecStart=/opt/skymirror/venv/bin/gunicorn skymirror.wsgi:application \
-  --bind 127.0.0.1:8000 --workers 2 --threads 4 --worker-class gthread --preload \
-  --timeout 60 --graceful-timeout 20 --max-requests 800 --max-requests-jitter 80 \
-  --access-logfile - --error-logfile - --forwarded-allow-ips 127.0.0.1
+  --bind 127.0.0.1:8000 --workers 6 --threads 4 --worker-class gthread --preload \
+  --timeout 60 --graceful-timeout 20 --keep-alive 5 \
+  --max-requests 1200 --max-requests-jitter 120 \
+  --access-logfile - --error-logfile - --forwarded-allow-ips 127.0.0.1 \
+  --access-logformat '{"event":"http_access","method":"%%(m)s","status":%%(s)s,"duration_us":%%(D)s,"request_id":"%%({x-request-id}o)s","route":"%%({x-route-name}o)s"}'
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=always
 RestartSec=3
-MemoryHigh=380M
-MemoryMax=450M
-TasksMax=100
+# 7.8 GB total RAM budget:
+#   MySQL         ~600 MB
+#   OS + Caddy    ~300 MB
+#   6 × gunicorn  ~1.2 GB (preloaded Django; workers share read-only pages)
+#   Headroom       ~600 MB
+# Leaves ~5 GB for the gunicorn process group.
+MemoryHigh=4500M
+MemoryMax=5500M
+TasksMax=400
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
