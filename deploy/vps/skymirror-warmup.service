@@ -1,0 +1,17 @@
+# Installed as /etc/systemd/system/skymirror-warmup.service
+# One-shot unit run by skymirror-warmup.timer every 30 seconds.
+# Fires 6 lightweight POST requests (one per Gunicorn worker) to keep
+# all workers hot and MySQL connections alive.
+[Unit]
+Description=SKY Mirror worker warmup ping
+After=skymirror.service
+Requires=skymirror.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/skymirror-warmup
+User=skymirror
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
