@@ -12,8 +12,8 @@ const ManagerIntake = lazy(() =>
   import("./components/ManagerIntake").then((m) => ({ default: m.ManagerIntake }))
 );
 
-const _params = new URLSearchParams(window.location.search);
-const IS_STAFF = _params.has("staff") || _params.has("branch");
+const params = new URLSearchParams(window.location.search);
+const IS_CUSTOMER = params.has("spin") || params.has("customer");
 
 export default function App() {
   const step = useStudio((s) => s.step);
@@ -21,13 +21,14 @@ export default function App() {
   // Gift pictures and the spin sound start loading once the customer signs
   // in, so the wheel opens with everything already on the phone.
   useEffect(() => {
-    if (phone) preloadRewards();
+    if (IS_CUSTOMER && phone) preloadRewards();
   }, [phone]);
   const [hydrated, setHydrated] = useState(false);
   // On start, re-check a number remembered from an earlier visit against the
   // database, so a prize already won (on any device) is restored rather than
   // re-spun. Fresh sign-ins are checked by PhoneGate itself.
   useEffect(() => {
+    if (!IS_CUSTOMER) return;
     const remembered = useStudio.getState().phone;
     if (!remembered) return;
     registerPhone(remembered)
@@ -50,7 +51,7 @@ export default function App() {
   if (!hydrated)
     return <div className="loading">Opening your saved studio…</div>;
 
-  if (IS_STAFF)
+  if (!IS_CUSTOMER)
     return (
       <MotionConfig reducedMotion="user">
         <main id="main" className="mobile-studio">

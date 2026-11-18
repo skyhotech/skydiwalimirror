@@ -95,7 +95,7 @@ async function mockCamera(
     });
 }
 async function takeSelfie(page: Page) {
-  await page.goto("/");
+  await page.goto("/?customer=1");
   await expect(
     page
       .locator(".camera-stage")
@@ -225,7 +225,7 @@ test("filter controls, uploads and flip controls are absent", async ({
   page,
 }) => {
   await mockCamera(page);
-  await page.goto("/");
+  await page.goto("/?customer=1");
   await expect(
     page.getByRole("button", {
       name: "Post on Instagram",
@@ -244,7 +244,7 @@ test("filter controls, uploads and flip controls are absent", async ({
 });
 test("a blank or covered-camera selfie is refused", async ({ page }) => {
   await mockCamera(page, false, false, true);
-  await page.goto("/");
+  await page.goto("/?customer=1");
   const shutter = page
     .locator(".camera-stage")
     .getByRole("button", { name: "Post on Instagram", exact: true });
@@ -272,7 +272,7 @@ test("permission denial offers retry without upload or flip suggestions", async 
       },
     });
   });
-  await page.goto("/");
+  await page.goto("/?customer=1");
   await expect(page.getByText(/Camera permission was denied/)).toBeVisible();
   await expect(
     page.getByRole("alert").filter({ hasText: "SKY needs your camera" }),
@@ -298,7 +298,7 @@ test("permission denial offers retry without upload or flip suggestions", async 
 test("both bundled original frames load without any upload prompt", async ({
   page,
 }) => {
-  await page.goto("/");
+  await page.goto("/?customer=1");
   for (const [name, path] of [
     ["Golden Mirror", "2.jpeg"],
     ["Festive Celebration", "1.jpeg"],
@@ -549,7 +549,7 @@ test("a smile or hand gesture takes the selfie by itself after 3-2-1", async ({
 }) => {
   test.setTimeout(90_000);
   await mockCamera(page, false, true);
-  await page.goto("/");
+  await page.goto("/?customer=1");
   const toggle = page.getByRole("button", { name: /Auto capture on/ });
   await expect(toggle).toBeVisible({ timeout: 60_000 });
   // No cue yet: nothing happens.
@@ -570,7 +570,7 @@ test("a smile or hand gesture takes the selfie by itself after 3-2-1", async ({
 test("auto capture can be switched off", async ({ page }) => {
   test.setTimeout(90_000);
   await mockCamera(page, false, true);
-  await page.goto("/");
+  await page.goto("/?customer=1");
   const toggle = page.getByRole("button", { name: /Auto capture on/ });
   await expect(toggle).toBeVisible({ timeout: 60_000 });
   await toggle.click();
@@ -728,7 +728,7 @@ test("customers must enter a valid mobile number before the studio opens", async
   });
   await page.addInitScript(() => localStorage.removeItem("sky-customer-phone"));
   await mockCamera(page);
-  await page.goto("/");
+  await page.goto("/?customer=1");
   const field = page.getByLabel("Mobile number", { exact: true });
   await expect(field).toBeVisible();
   await expect(page.locator(".camera-stage")).toHaveCount(0);
@@ -817,7 +817,7 @@ test("sign-in shows a clear message for each kind of failure", async ({
   );
   await page.addInitScript(() => localStorage.removeItem("sky-customer-phone"));
   await mockCamera(page);
-  await page.goto("/");
+  await page.goto("/?customer=1");
   await page.getByLabel("Mobile number", { exact: true }).fill("9123456789");
   const go = page.getByRole("button", { name: "Proceed" });
   const help = page.locator("#phone-help");
