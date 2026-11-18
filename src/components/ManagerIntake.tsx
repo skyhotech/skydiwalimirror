@@ -3,7 +3,6 @@ import {
   Suspense,
   useCallback,
   useEffect,
-  useMemo,
   useRef,
   useState,
 } from "react";
@@ -13,7 +12,6 @@ import errorSound from "../assets/rewards/error.mp3";
 import { motion, useAnimationControls } from "motion/react";
 import {
   ApiError,
-  BRANCH,
   PHONE_PATTERN,
   checkPurchase,
   scanInvoice,
@@ -52,12 +50,11 @@ export function ManagerIntake() {
   const [branches, setBranches] = useState<BranchOption[]>(initialBranches);
   const [error, setError] = useState("");
   const [form, setForm] = useState(EMPTY);
-  // A branch QR code opens the page with its store selected.
-  const [branch, setBranch] = useState<BranchOption | null>(
-    () => initialBranches().find((b) => b.slug === BRANCH) ?? null,
+  const [storePhones, setStorePhones] = useState<string[]>([]);
+  const issuingStores = branches.filter((store) =>
+    store.phone && storePhones.includes(store.phone.replace(/\D/g, "").slice(-10)),
   );
-  const [search, setSearch] = useState("");
-  const [picking, setPicking] = useState(false);
+  const branch = issuingStores.length === 1 ? issuingStores[0] : null;
   const [image, setImage] = useState<File | null>(null);
   const [scanning, setScanning] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -90,7 +87,6 @@ export function ManagerIntake() {
         if (!live) return;
         setBranches(list);
         saveBranches(list);
-        // A branch QR code opens the page with its store selected.
       })
       .catch((e: ApiError) => {
         if (!live) return;
@@ -101,10 +97,6 @@ export function ManagerIntake() {
       live = false;
     };
   }, [fail]);
-  const matches = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    return branches.filter((b) => b.name.toLowerCase().includes(q));
-  }, [branches, search]);
   // Any edit means the sent link no longer matches what was checked.
   function change(field: keyof typeof EMPTY, value: string) {
     setForm((f) => ({ ...f, [field]: value }));
@@ -142,6 +134,7 @@ export function ManagerIntake() {
     setImage(file);
     setForm(EMPTY);
     setHasImei(false);
+    setStorePhones([]);
     setLink("");
     setError("");
     if (!file) return;
@@ -161,10 +154,7 @@ export function ManagerIntake() {
         invoice: found.invoice ?? "",
         bill: found.bill ?? "",
       });
-      const store = found.storePhone
-        ? branches.find((b) => b.phone?.replace(/\D/g, "").slice(-10) === found.storePhone)
-        : undefined;
-      setBranch((previous) => store ?? previous ?? branches.find((b) => b.slug === BRANCH) ?? null);
+      setStorePhones(found.storePhones);
     } catch (e) {
       if (current !== selection.current) return;
       scan.current = null;
@@ -182,8 +172,8 @@ export function ManagerIntake() {
     if (hasImei && !imeiValid(form.imei)) return "This IMEI number is not valid.";
     if (!form.invoice.trim()) return "Enter the invoice number.";
     if (!(Number(form.bill) >= 1)) return "Enter the bill value.";
-    if (!branch) return "Select a branch.";
     if (!image) return "Upload the invoice PDF or image.";
+    if (!branch) return "We couldn’t identify the SKY store on this invoice. Upload the full PDF with the store contact number visible.";
     if (!image.type.startsWith("image/") && image.type !== "application/pdf" && !/\.pdf$/i.test(image.name))
       return "The invoice must be an image or PDF.";
     return "";
@@ -245,6 +235,7 @@ export function ManagerIntake() {
   }
   function next() {
     setForm(EMPTY);
+    setStorePhones([]);
     setImage(null);
     setLink("");
     setSent(false);
@@ -372,57 +363,6 @@ export function ManagerIntake() {
             min: 1,
             step: "0.01",
           })}
-          <label htmlFor="m-branch">Branch</label>
-          <div className="manager-branch">
-            <input
-              id="m-branch"
-              className="manager-input"
-              role="combobox"
-              aria-expanded={picking}
-              aria-controls="m-branch-list"
-              autoComplete="off"
-              placeholder="Search branch"
-              value={picking ? search : (branch?.name ?? "")}
-              onFocus={() => {
-                setSearch("");
-                setPicking(true);
-              }}
-              onClick={() => {
-                setSearch("");
-                setPicking(true);
-              }}
-              onBlur={() => setPicking(false)}
-              onChange={(e) => setSearch(e.target.value)}
-            />
-            {picking && (
-              <ul id="m-branch-list" className="manager-options" role="listbox">
-                {matches.map((b) => (
-                  <li
-                    key={b.slug}
-                    role="option"
-                    aria-selected={b.slug === branch?.slug}
-                    // Keeps the input from blurring, which would close the
-                    // list before the tap lands; a scroll is not a tap.
-                    onPointerDown={(e) => e.preventDefault()}
-                    onClick={() => {
-                      setBranch(b);
-                      setPicking(false);
-                      setLink("");
-                    }}
-                  >
-                    {b.name}
-                  </li>
-                ))}
-                {!matches.length && (
-                  <li>
-                    {branches.length
-                      ? "No branch found"
-                      : "No branches yet. Add them in the admin dashboard."}
-                  </li>
-                )}
-              </ul>
-            )}
-          </div>
           <label htmlFor="m-image">Invoice PDF</label>
           <div className="manager-row">
             <label className="manager-scan manager-pick">

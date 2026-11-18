@@ -31,7 +31,7 @@ test("the manager form fills a PDF and validates the submitted values", async ({
     return route.fulfill({ json: { link: "https://studio.example/?spin=test" } });
   });
 
-  await page.goto("/?branch=ranipet-2");
+  await page.goto("/");
   await expect(page.getByRole("heading", { name: "Customer details" })).toBeVisible();
   await page.locator("#m-image").setInputFiles({
     name: "invoice.pdf", mimeType: "application/pdf", buffer: Buffer.from("%PDF-1.4"),
@@ -42,7 +42,7 @@ test("the manager form fills a PDF and validates the submitted values", async ({
   await expect(page.getByLabel("Product details")).toHaveValue("SKY TV");
   await expect(page.getByLabel("Invoice number")).toHaveValue("SI2627RPT12261");
   await expect(page.getByLabel("Bill value (₹)")).toHaveValue("24999");
-  await expect(page.getByRole("combobox", { name: "Branch" })).toHaveValue("RANIPET-2");
+  await expect(page.getByRole("combobox", { name: "Branch" })).toHaveCount(0);
 
   await page.getByLabel("Bill value (₹)").fill("50000");
   await page.getByRole("button", { name: "Check", exact: true }).click();

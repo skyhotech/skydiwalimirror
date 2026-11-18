@@ -68,7 +68,7 @@ export type InvoiceFields = {
 /** The customer details printed on an invoice, for filling in the form. */
 export function extractInvoice(
   text: string,
-): Partial<InvoiceFields> & { storePhone?: string } {
+): Partial<InvoiceFields> & { storePhone?: string; storePhones: string[] } {
   const lines = text.split("\n").map((l) => l.replace(/[|\[\]]/g, " ").trim());
   const billedAt = lines.findIndex((l) => /billed\s*to/i.test(l));
   // Billed To and Shipped To sit side by side, so a name can appear twice.
@@ -104,8 +104,13 @@ export function extractInvoice(
   const storePhone = top.match(
     /\b(?:ph(?:one)?|mobile|contact)(?:[ .]?(?:number|no))?\s*[.:;\-]*\s*(?:\+?91[ -]?)?([6-9]\d{4}[ -]?\d{5})\b/i,
   )?.[1].replace(/\D/g, "");
+  const storePhones = storePhone
+    ? [storePhone]
+    : [...top.matchAll(/(?:^|\D)([6-9]\d{4}[ -]?\d{5})(?!\d)/g)]
+        .map((match) => match[1].replace(/\D/g, ""));
   return {
     storePhone,
+    storePhones,
     name: name || undefined,
     phone,
     email,
