@@ -98,8 +98,8 @@ export const PHONE_PATTERN = new RegExp(
 // Customer-facing messages; technical details never reach the screen.
 export const ERRORS = {
   offline: "You're offline. Check the Wi-Fi or mobile data and try again.",
-  unreachable: "Can't reach SKY right now. Please try again in a moment.",
-  timeout: "SKY is taking too long to respond. Please try again.",
+  unreachable: "You may have an internet connection issue. Please try again.",
+  timeout: "The request timed out. Check your internet connection and try again.",
   server: "Something went wrong on our side. Please try again in a moment.",
   busy: (seconds: number) =>
     `Too many tries. Please wait ${
@@ -435,7 +435,7 @@ export const checkPurchase = (form: FormData) =>
   postJson<{ phone: string; link: string }>("/manager/check/", form, INTAKE_API);
 
 export function trackSent(phone: string) {
-  void fetch(`${API}/manager/sent/`, {
+  void fetch(`${INTAKE_API}/manager/sent/`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ phone }),

@@ -1,6 +1,13 @@
 import { expect, test } from "@playwright/test";
 
 test("the manager form fills a PDF and sends the corrected values", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.open = (url) => {
+      document.body.dataset.whatsappDraft = String(url);
+      return null;
+    };
+  });
+  await page.route("**/api/manager/sent/", (route) => route.fulfill({ json: { ok: true } }));
   const line = [
     "TAX INVOICE",
     "Ph: 8667670649",
@@ -59,5 +66,12 @@ test("the manager form fills a PDF and sends the corrected values", async ({ pag
 
   await page.getByLabel("Bill value (₹)").fill("50000");
   await page.getByRole("button", { name: "Check", exact: true }).click();
-  await expect(page.getByRole("button", { name: "Send link in WhatsApp" })).toBeVisible();
+  const tracked = page.waitForRequest("**/api/manager/sent/");
+  await page.getByRole("button", { name: "Send link in WhatsApp" }).click();
+  expect((await tracked).postDataJSON()).toEqual({ phone: "9845011111" });
+  const draft = new URL((await page.locator("body").getAttribute("data-whatsapp-draft"))!);
+  expect(draft.hostname + draft.pathname).toBe("wa.me/919845011111");
+  expect(draft.searchParams.get("text")).toContain("happy Karthigai Deepam");
+  expect(draft.searchParams.get("text")).toContain("இனிய கார்த்திகை தீபத் திருநாள் நல்வாழ்த்துகள்!");
+  expect(draft.searchParams.get("text")).toContain("https://studio.example/?spin=test");
 });

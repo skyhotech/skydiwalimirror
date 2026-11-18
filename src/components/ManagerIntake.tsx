@@ -225,7 +225,12 @@ export function ManagerIntake() {
     }
   }
   function sendWhatsapp() {
-    const text = `Hi ${form.name.trim()}, thank you for shopping at SKY Mobile & Electronics! 🪔 Spin the wheel for your Karthigai Deepam gift: ${link}`;
+    const text = [
+      `Hi ${form.name.trim()}, happy Karthigai Deepam! 🪔`,
+      "இனிய கார்த்திகை தீபத் திருநாள் நல்வாழ்த்துகள்!",
+      "Thank you for shopping at SKY Mobile & Electronics. Open your gift tracking link to spin the wheel and see your gift.",
+      link,
+    ].join("\n\n");
     window.open(
       `https://wa.me/91${form.phone}?text=${encodeURIComponent(text)}`,
       "_blank",

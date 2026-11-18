@@ -45,7 +45,7 @@ const UPLOAD_TEXT: Record<Exclude<UploadState, "idle">, string> = {
   saving: "Saving your poster to SKY…",
   saved: "Poster saved with SKY.",
   retrying:
-    "Couldn't reach SKY. Your poster is kept on this device and will upload automatically.",
+    "Your poster is saved on this device and will upload automatically when the connection returns.",
   failed:
     "Your poster couldn't be saved. Please show this screen to a SKY staff member.",
 };
