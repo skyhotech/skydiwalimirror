@@ -13,11 +13,6 @@ export function Festive({
       <div className="phone-bg" aria-hidden="true">
         <div className="phone-glow" />
         <div className="phone-mandala" />
-        <div className="deepam-lamps">
-          {Array.from({ length: 5 }, (_, index) => (
-            <span className="deepam-lamp" key={index} />
-          ))}
-        </div>
       </div>
       {banner && <IphoneBanner />}
       {children}

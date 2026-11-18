@@ -1,13 +1,14 @@
 import { describe, it, expect } from "vitest";
 import { templates, DEFAULT_TEMPLATE_ID } from "../templates";
-import { productRects } from "./renderer";
+import { productRects, WIDTH, HEIGHT } from "./renderer";
 describe("poster layout", () => {
   it("keeps the large mirror and all purchased products separate", () => {
-    expect(templates).toHaveLength(3);
+    expect([WIDTH, HEIGHT]).toEqual([1080, 1350]);
+    expect(templates).toHaveLength(4);
     expect(templates[0].id).toBe(DEFAULT_TEMPLATE_ID);
-    expect(templates[0].artwork).toBe("frames/0.jpeg");
+    expect(templates[0].artwork).toBe("frames/karthigai-deepam.webp");
     for (const t of templates) {
-      expect(t.selfie.h).toBeGreaterThan(850);
+      expect(t.selfie.h).toBeGreaterThan(300);
       expect(t.selfie.y + t.selfie.h).toBeLessThan(t.product.y);
       for (let n = 1; n <= 5; n++) {
         const cards = productRects(t.product, n, "gallery");

@@ -17,9 +17,28 @@ export type Template = {
   fit: "cover";
   artwork: string;
 };
-// Coordinates use the shared 1080 × 1920 export design space.
-export const DEFAULT_TEMPLATE_ID = "dream";
+// Stored mirror coordinates still use the original 1080 × 1920 design grid.
+export const MIRROR_DESIGN_HEIGHT = 1920;
+export const DEFAULT_TEMPLATE_ID = "karthigai-deepam";
 export const templates: Template[] = [
+  {
+    id: DEFAULT_TEMPLATE_ID,
+    name: "Karthigai Deepam",
+    subtitle: "இனிய கார்த்திகை தீபத் திருநாள் நல்வாழ்த்துகள்!",
+    bg: "#f7e7cc",
+    ink: "#3c2418",
+    gold: "#d6a447",
+    accent: "#a02b24",
+    light: true,
+    arch: false,
+    selfie: { x: 255, y: 505, w: 570, h: 420 },
+    product: { x: 374, y: 1038, w: 332, h: 197 },
+    logo: { x: 0, y: 0, w: 0, h: 0 },
+    heading: { x: 0, y: 0 },
+    animation: "quiet",
+    fit: "cover",
+    artwork: "frames/karthigai-deepam.webp",
+  },
   {
     id: "dream",
     name: "Dream Diwali",

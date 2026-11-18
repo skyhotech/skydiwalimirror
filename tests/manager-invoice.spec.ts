@@ -33,6 +33,9 @@ test("the manager form fills a PDF and validates the submitted values", async ({
 
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "Customer details" })).toBeVisible();
+  await expect(page.locator(".vilakku-flame")).toHaveCount(5);
+  const lamp = page.locator(".vilakku-wrap img");
+  await expect.poll(() => lamp.evaluate((img: HTMLImageElement) => img.naturalWidth)).toBeGreaterThan(0);
   const fieldStyles = await page.locator(".manager-card > .phone-field").evaluateAll((fields) =>
     fields.map((field) => {
       const style = getComputedStyle(field);

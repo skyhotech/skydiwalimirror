@@ -4,7 +4,7 @@ from django.conf import settings
 from django.core.files import File
 from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
-from django.db.models import Max, Q
+from django.db.models import Q
 from django.utils import timezone
 
 from mirrors.models import Mirror
@@ -34,13 +34,12 @@ class Command(BaseCommand):
         if mirror is None:
             if not ARTWORK.is_file():
                 raise CommandError(f"Missing artwork: {ARTWORK}")
-            order = (Mirror.objects.aggregate(last=Max("order"))["last"] or 0) + 1
             mirror = Mirror(
-                slug=SLUG, name="Karthigai Deepam", order=order,
+                slug=SLUG, name="Karthigai Deepam", order=0,
                 subtitle="இனிய கார்த்திகை தீபத் திருநாள் நல்வாழ்த்துகள்!",
                 accent="#a02b24", arch=False,
-                selfie={"x": 174, "y": 385, "w": 732, "h": 556},
-                product={"x": 264, "y": 1050, "w": 552, "h": 225},
+                selfie={"x": 255, "y": 505, "w": 570, "h": 420},
+                product={"x": 374, "y": 1038, "w": 332, "h": 197},
             )
             with ARTWORK.open("rb") as artwork:
                 mirror.artwork.save(ARTWORK.name, File(artwork), save=False)

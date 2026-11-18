@@ -311,7 +311,7 @@ button {
 }
 .hero-poster {
   width: 292px;
-  aspect-ratio: 9/16;
+  aspect-ratio: 4 / 5;
   transform: rotate(5deg);
   position: relative;
   box-shadow: 10px 20px 45px #182b291f;
@@ -752,7 +752,7 @@ footer p {
 }
 .camera-stage {
   width: 290px;
-  aspect-ratio: 9/16;
+  aspect-ratio: 4 / 5;
   position: relative;
   overflow: hidden;
   border-radius: 12px;
@@ -2274,7 +2274,6 @@ body {
 .poster-post-action:disabled {
   opacity: 0.5;
 }
-/* Previews carry the Instagram footer (330 of 2400 px); keep buttons above it. */
 .camera-workspace .instagram-shutter.poster-post-action {
   bottom: 15%;
   min-height: 50px;
@@ -2290,8 +2289,7 @@ body {
 }
 .editor-poster .drag-hint {
   bottom: auto;
-  /* Just below the Instagram header band (150 of 2400 px). */
-  top: calc(6.25% + 8px);
+  top: 8px;
 }
 .editor-poster .poster-post-action {
   bottom: 15%;
@@ -3175,79 +3173,37 @@ body {
   }
 }
 
-/* ── Vilakku (Karthigai Deepam lamp) ──────────────────────── */
+/* Five terracotta lamps with independently animated flames. */
 .vilakku-wrap {
-  display: flex;
-  justify-content: center;
-  margin: 4px 0 8px;
-  filter: drop-shadow(0 0 12px rgba(255, 160, 0, 0.55));
+  position: relative;
+  width: min(220px, 80%);
+  margin: 10px auto 4px;
 }
-.vilakku {
-  width: 72px;
+.vilakku-wrap img {
+  display: block;
+  width: 100%;
   height: auto;
 }
-.vilakku-halo {
-  animation: vilakku-halo 1.6s ease-in-out infinite alternate;
-  transform-origin: 40px 34px;
+.vilakku-flame {
+  position: absolute;
+  translate: -50% -100%;
+  width: 3.2%;
+  height: 27%;
+  border-radius: 58% 45% 55% 43% / 80% 66% 32% 19%;
+  background: radial-gradient(ellipse at 50% 72%, #fff 16%, #fff0a6 43%, #ffbb35 70%, #ed741c 95%);
+  box-shadow: 0 0 8px 1px #ffa52e90;
+  transform-origin: 50% 100%;
+  animation: vilakku-flicker 1.1s ease-in-out infinite alternate;
 }
-.vilakku-flame-outer {
-  animation: vilakku-flicker-outer 0.9s ease-in-out infinite alternate;
-  transform-origin: 40px 44px;
+.vilakku-flame:nth-child(odd) {
+  height: 23%;
 }
-.vilakku-flame-mid {
-  animation: vilakku-flicker-mid 0.7s ease-in-out infinite alternate;
-  transform-origin: 40px 42px;
+@keyframes vilakku-flicker {
+  from { transform: skewX(-5deg) scaleY(.88); opacity: .85; }
+  to { transform: skewX(5deg) scaleY(1.04); opacity: 1; }
 }
-.vilakku-flame-inner {
-  animation: vilakku-flicker-inner 0.5s ease-in-out infinite alternate;
-  transform-origin: 40px 38px;
-}
-.vspark {
-  animation: vilakku-spark 2.4s ease-in-out infinite;
-}
-.vspark-1 { animation-delay: 0s; }
-.vspark-2 { animation-delay: 0.4s; }
-.vspark-3 { animation-delay: 0.8s; }
-.vspark-4 { animation-delay: 1.2s; }
-.vspark-5 { animation-delay: 1.6s; }
-.vspark-6 { animation-delay: 2.0s; }
-
-@keyframes vilakku-halo {
-  from { opacity: 0.4; }
-  to   { opacity: 0.9; }
-}
-@keyframes vilakku-flicker-outer {
-  from { transform: scaleX(1) skewX(0deg); opacity: 1; }
-  to   { transform: scaleX(0.88) skewX(4deg); opacity: 0.85; }
-}
-@keyframes vilakku-flicker-mid {
-  from { transform: scaleX(1) skewX(0deg) scaleY(1); }
-  to   { transform: scaleX(0.92) skewX(-3deg) scaleY(0.95); }
-}
-@keyframes vilakku-flicker-inner {
-  from { transform: scaleX(1) scaleY(1); opacity: 1; }
-  to   { transform: scaleX(0.85) scaleY(0.9); opacity: 0.8; }
-}
-@keyframes vilakku-spark {
-  0%   { opacity: 0; transform: translate(0, 0) scale(1); }
-  30%  { opacity: 1; }
-  100% { opacity: 0; transform: translate(var(--sx, 4px), -18px) scale(0.4); }
-}
-.vspark-1 { --sx: -6px; }
-.vspark-2 { --sx: 8px; }
-.vspark-3 { --sx: -10px; }
-.vspark-4 { --sx: 12px; }
-.vspark-5 { --sx: -4px; }
-.vspark-6 { --sx: 6px; }
-
 @media (prefers-reduced-motion: reduce) {
-  .vilakku-halo,
-  .vilakku-flame-outer,
-  .vilakku-flame-mid,
-  .vilakku-flame-inner,
-  .vspark {
-    animation: none !important;
-  }
+  .vilakku-flame { animation: none; }
 }
 @media (prefers-reduced-motion: reduce) {
   .phone-glow,
@@ -3265,9 +3221,7 @@ body {
    Instagram footer band of the preview. */
 .camera-workspace .instagram-shutter.poster-post-action,
 .editor-poster .poster-post-action {
-  /* The poster is letterboxed in the stage (1080 × 2400, stage = 100dvh − 84px
-     tall), so cap the button at 90% of the poster's on-screen width too. */
-  width: min(90%, 440px, (100dvh - 84px) * 0.45 * 0.9);
+  width: min(90%, 440px, (100dvh - 84px) * 0.8 * 0.9);
   max-width: none;
   min-height: clamp(48px, 6.5dvh, 62px);
   padding: 0 clamp(14px, 4vw, 24px);

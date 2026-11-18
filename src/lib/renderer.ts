@@ -1,9 +1,14 @@
-import type { Template, Rect } from "../templates";
+import { DEFAULT_TEMPLATE_ID, MIRROR_DESIGN_HEIGHT, type Template, type Rect } from "../templates";
 import type { Photo, Layout } from "./store";
 import { frameAsset } from "./frameAssets";
 import { getReward, rewardImage } from "./rewards";
 export const WIDTH = 1080,
-  HEIGHT = 1920;
+  HEIGHT = 1350;
+const heightScale = HEIGHT / MIRROR_DESIGN_HEIGHT;
+
+function postRect(rect: Rect): Rect {
+  return { ...rect, y: rect.y * heightScale, h: rect.h * heightScale };
+}
 type Source = HTMLImageElement | HTMLVideoElement | HTMLCanvasElement;
 function size(source: Source) {
   return source instanceof HTMLVideoElement
@@ -82,6 +87,19 @@ export type Composition = {
 // Mirror contours are calibrated to the two supplied 900 × 1600 posters.
 function mirrorPath(ctx: CanvasRenderingContext2D, t: Template) {
   ctx.beginPath();
+  ctx.save();
+  const original: Record<string, Rect> = {
+    dream: { x: 184, y: 165, w: 712, h: 950 },
+    golden: { x: 126, y: 115, w: 828, h: 1215 },
+    celebration: { x: 207, y: 160, w: 666, h: 1040 },
+  };
+  const reference = original[t.id];
+  if (reference) {
+    const sx = t.selfie.w / reference.w,
+      sy = t.selfie.h / reference.h;
+    ctx.translate(t.selfie.x - reference.x * sx, t.selfie.y - reference.y * sy);
+    ctx.scale(sx, sy);
+  }
   if (t.id === "dream") {
     ctx.moveTo(236, 1115);
     ctx.lineTo(236, 730);
@@ -102,7 +120,7 @@ function mirrorPath(ctx: CanvasRenderingContext2D, t: Template) {
     ctx.quadraticCurveTo(952, 120, 952, 280);
     ctx.lineTo(952, 1330);
     ctx.closePath();
-  } else {
+  } else if (t.id === "celebration") {
     ctx.moveTo(207, 1200);
     ctx.lineTo(207, 340);
     ctx.bezierCurveTo(207, 210, 280, 145, 390, 150);
@@ -110,13 +128,28 @@ function mirrorPath(ctx: CanvasRenderingContext2D, t: Template) {
     ctx.bezierCurveTo(800, 145, 873, 210, 873, 340);
     ctx.lineTo(873, 1200);
     ctx.closePath();
+  } else {
+    // Staff-created frames use their configured bounds, not the contour
+    // calibrated for the bundled celebration artwork.
+    ctx.roundRect(
+      t.selfie.x,
+      t.selfie.y,
+      t.selfie.w,
+      t.selfie.h,
+      t.arch ? Math.min(t.selfie.w / 2, 120) : 24,
+    );
   }
+  ctx.restore();
 }
 // Keyed by the artwork image, so a new image for the same theme gets a new cut-out.
-const overlays = new WeakMap<HTMLImageElement, HTMLCanvasElement>();
+const overlays = new WeakMap<
+  HTMLImageElement,
+  { key: string; canvas: HTMLCanvasElement }
+>();
 function artworkOverlay(t: Template, image: HTMLImageElement) {
+  const key = JSON.stringify([t.id, t.selfie, t.arch]);
   const cached = overlays.get(image);
-  if (cached) return cached;
+  if (cached?.key === key) return cached.canvas;
   const c = document.createElement("canvas");
   c.width = WIDTH;
   c.height = HEIGHT;
@@ -136,15 +169,16 @@ function artworkOverlay(t: Template, image: HTMLImageElement) {
     for (let x = 0; x < WIDTH; x++) {
       const i = (y * WIDTH + x) * 4;
       if (!clip[i + 3]) continue;
-      const logo = ((x - 540) / 155) ** 2 + ((y - 144) / 158) ** 2 < 1;
+      const designY = y / heightScale;
+      const logo = ((x - 540) / 155) ** 2 + ((designY - 144) / 158) ** 2 < 1;
       const cameraBadge =
         t.id === "golden"
-          ? ((x - 94) / 65) ** 2 + ((y - 431) / 49) ** 2 < 1
-          : ((x - 110) / 60) ** 2 + ((y - 568) / 43) ** 2 < 1;
+          ? ((x - 94) / 65) ** 2 + ((designY - 431) / 49) ** 2 < 1
+          : ((x - 110) / 60) ** 2 + ((designY - 568) / 43) ** 2 < 1;
       const lantern =
         t.id === "dream" &&
         [270, 804].some(
-          (cx) => ((x - cx) / 48) ** 2 + ((y - 289) / 85) ** 2 < 1,
+          (cx) => ((x - cx) / 48) ** 2 + ((designY - 289) / 85) ** 2 < 1,
         );
       if (logo || (t.id !== "dream" && cameraBadge) || lantern) continue;
       const r = pixels.data[i],
@@ -159,18 +193,19 @@ function artworkOverlay(t: Template, image: HTMLImageElement) {
         (t.id === "dream" ? 1 : Math.max(0, Math.min(1, (220 - max) / 20))) *
         Math.max(0, Math.min(1, (min - 35) / 20));
       pixels.data[i + 3] = Math.round(
-        255 * (1 - (removal * clip[i + 3]) / 255),
+        pixels.data[i + 3] * (1 - (removal * clip[i + 3]) / 255),
       );
     }
   ctx.putImageData(pixels, 0, 0);
-  overlays.set(image, c);
+  overlays.set(image, { key, canvas: c });
   return c;
 }
 export function renderPoster(
   ctx: CanvasRenderingContext2D,
   state: Composition,
 ) {
-  const { template: t, selfie, products, layout, video, mirror } = state;
+  const { template, selfie, products, layout, video, mirror } = state;
+  const t = { ...template, selfie: postRect(template.selfie), product: postRect(template.product) };
   ctx.clearRect(0, 0, WIDTH, HEIGHT);
   ctx.fillStyle = t.bg;
   ctx.fillRect(0, 0, WIDTH, HEIGHT);
@@ -183,7 +218,9 @@ export function renderPoster(
     imageIn(ctx, video, t.selfie, undefined, "cover", mirror);
   else if (selfie) imageIn(ctx, selfie.image, t.selfie, selfie.adjust, "cover");
   ctx.restore();
-  if (asset.image) ctx.drawImage(artworkOverlay(t, asset.image), 0, 0);
+  // The Deepam frame has an intentionally clear, unobstructed photo window.
+  if (asset.image && t.id !== DEFAULT_TEMPLATE_ID)
+    ctx.drawImage(artworkOverlay(t, asset.image), 0, 0);
   if (products.length) {
     ctx.save();
     rounded(ctx, t.product, 24);

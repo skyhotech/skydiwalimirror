@@ -378,7 +378,7 @@ test("Post on Instagram shares the completed poster with generated SKY caption",
       files: 1,
       type: "image/jpeg",
       width: 1080,
-      height: 2400,
+      height: 1350,
       text: expect.stringContaining("@skymobileindia"),
     });
   await expect(

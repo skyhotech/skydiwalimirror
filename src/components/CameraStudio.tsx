@@ -23,14 +23,9 @@ import {
   looksBlank,
 } from "../lib/images";
 import { instagramCaption, copyCaption } from "../lib/sharing";
-import {
-  instagramReady,
-  renderInstagramPost,
-  POST_HEIGHT,
-  HEADER,
-} from "../lib/instagram";
+import { renderPoster, WIDTH, HEIGHT } from "../lib/renderer";
 import { frameAsset } from "../lib/frameAssets";
-import { getTemplate, templates } from "../templates";
+import { getTemplate, templates, MIRROR_DESIGN_HEIGHT } from "../templates";
 import { Poster } from "./Poster";
 import { Templates } from "./Templates";
 import { SpinWheel } from "./SpinWheel";
@@ -257,12 +252,11 @@ export default function CameraStudio() {
     if (frameAsset(getTemplate(current.template)).status !== "ready")
       throw new Error("The frame is still loading. Please try again.");
     const c = document.createElement("canvas");
-    await instagramReady();
-    c.width = 1080;
-    c.height = POST_HEIGHT;
+    c.width = WIDTH;
+    c.height = HEIGHT;
     const ctx = c.getContext("2d");
     if (!ctx) throw new Error("Could not prepare your poster. Try again.");
-    renderInstagramPost(ctx, {
+    renderPoster(ctx, {
       template: getTemplate(current.template),
       selfie: current.selfie,
       products: current.products,
@@ -329,7 +323,6 @@ export default function CameraStudio() {
             className="hidden-video"
           />
           <Poster
-            chrome
             live={camera.ready && !completed}
             state={{
               template,
@@ -385,7 +378,7 @@ export default function CameraStudio() {
               className="inline-product-hint"
               style={{
                 left: `${template.product.x / 10.8}%`,
-                top: `${((HEADER + template.product.y) / POST_HEIGHT) * 100}%`,
+                top: `${(template.product.y / MIRROR_DESIGN_HEIGHT) * 100}%`,
                 width: `${template.product.w / 10.8}%`,
               }}
             >

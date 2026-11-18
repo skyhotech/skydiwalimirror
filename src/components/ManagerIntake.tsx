@@ -27,6 +27,7 @@ import {
 } from "../lib/invoiceScan";
 import { initialBranches, saveBranches } from "../lib/branches";
 import { Festive } from "./Festive";
+import { VilakkuLamp } from "./VilakkuLamp";
 const ImeiScanner = lazy(() => import("./ImeiScanner"));
 // Loaded up front so the sound plays the moment a check fails.
 const errorAudio = typeof Audio === "undefined" ? null : new Audio(errorSound);
@@ -309,6 +310,7 @@ export function ManagerIntake() {
           <div className="phone-logo">
             <img src={skyLogo} alt="SKY Mobile & Electronics" />
           </div>
+          <VilakkuLamp />
           <h1 className="phone-title">Customer details</h1>
           {field("name", "Customer name", { maxLength: 80, autoComplete: "off" })}
           {field("phone", "Customer contact number", {
