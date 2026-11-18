@@ -1,14 +1,15 @@
 import { useEffect, useRef, useState } from "react";
 import {
   Camera,
+  CameraOff,
   Instagram,
   RefreshCw,
-  CameraOff,
   Copy,
   ExternalLink,
   Download,
   UserPlus,
   Sparkles,
+  SwitchCamera,
 } from "lucide-react";
 import { motion } from "motion/react";
 import { useCamera } from "../hooks/useCamera";
@@ -23,20 +24,21 @@ import {
   looksBlank,
 } from "../lib/images";
 import { instagramCaption, copyCaption } from "../lib/sharing";
-import {
-  instagramReady,
-  renderInstagramPost,
-  POST_HEIGHT,
-  HEADER,
-} from "../lib/instagram";
+import { renderPoster, WIDTH, HEIGHT } from "../lib/renderer";
 import { frameAsset } from "../lib/frameAssets";
-import { getTemplate, templates } from "../templates";
+import { getTemplate, templates, MIRROR_DESIGN_HEIGHT } from "../templates";
 import { Poster } from "./Poster";
 import { Templates } from "./Templates";
-import { SpinWheel } from "./SpinWheel";
 import { UploadStatus } from "./StatusNotices";
-import type { Reward } from "../lib/rewards";
-import { spinPrize } from "../lib/backend";
+import { ShareButtons } from "./ShareButtons";
+import { trackShare } from "../lib/backend";
+import { CameraAlert } from "./CameraAlert";
+import { ShareWizard } from "./ShareWizard";
+import {
+  WhatsAppButton,
+  WhatsAppNudge,
+  shareOnWhatsapp,
+} from "./WhatsAppShare";
 // Hands-free capture: how strong a smile counts, and how long a cue is held.
 const SMILE_THRESHOLD = 0.6;
 const HOLD_MS = 500;
@@ -52,18 +54,31 @@ const AUTO_GESTURES: Record<string, string> = {
 export default function CameraStudio() {
   const s = useStudio(),
     product = s.step === "product";
-  const [closed, setClosed] = useState(false),
-    [busy, setBusy] = useState(false),
+  const [busy, setBusy] = useState(false),
     [message, setMessage] = useState(""),
     [flash, setFlash] = useState(false),
     [completed, setCompleted] = useState(false),
     [poster, setPoster] = useState<Blob | null>(null),
     [captionMessage, setCaptionMessage] = useState(""),
-    [spinOpen, setSpinOpen] = useState(false);
+    [whatsappNudge, setWhatsappNudge] = useState(false),
+    [wizard, setWizard] = useState(false),
+    // The customer swapped front/back camera; reset for each new shot.
+    [flipped, setFlipped] = useState(false);
   const busyRef = useRef(false);
+  const mounted = useRef(true);
+  const flashTimer = useRef(0);
+  const [closed, setClosed] = useState(false);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      window.clearTimeout(flashTimer.current);
+    };
+  }, []);
+  useEffect(() => setFlipped(false), [product]);
   const camera = useCamera(
-    product ? "environment" : "user",
-    !closed && !completed,
+    product !== flipped ? "environment" : "user",
+    !completed && !closed,
   );
   const effect = useExpression(
     camera.videoRef,
@@ -80,7 +95,8 @@ export default function CameraStudio() {
     !closed &&
     !busy &&
     camera.ready &&
-    effect.ready;
+    effect.ready &&
+    effect.autoAvailable;
   useEffect(() => {
     if (!autoArmed || countdown !== null) return;
     let heldSince = 0;
@@ -128,7 +144,7 @@ export default function CameraStudio() {
       s.products.length,
       s.products.map((p) => p.label),
     ),
-    filename = `SKY-Diwali-${s.template}`;
+    filename = `SKY-Karthigai-Deepam-${s.template}`;
   // Only ever called from a tap: phones open the share sheet (and allow the
   // Instagram fallback tab) only straight after one.
   async function post(blob: Blob, text: string) {
@@ -142,15 +158,20 @@ export default function CameraStudio() {
       ),
     );
     try {
+      // The poster's big button: counted like the Instagram share button.
+      const { token } = useStudio.getState();
+      if (token) trackShare(token, "share_opened_instagram");
       if (navigator.canShare?.({ files: [file] }) && navigator.share) {
         setMessage(
           "Choose Instagram → Post/Feed. Your poster and SKY caption are ready.",
         );
         await navigator.share({
           files: [file],
-          title: "My SKY Diwali moment",
+          title: "My SKY Karthigai Deepam moment",
           text,
         });
+        if (token) trackShare(token, "shared_instagram");
+        setWhatsappNudge(true);
       } else {
         download(blob, name);
         window.open(
@@ -201,18 +222,29 @@ export default function CameraStudio() {
         );
       // No blank photos, and a selfie must show a face (when the on-device
       // reader is running, so an empty frame can't pass as a selfie).
-      if (looksBlank(photo.image)) throw new Error(BLANK_PHOTO);
+      if (!mounted.current) {
+        URL.revokeObjectURL(photo.url);
+        return;
+      }
+      if (looksBlank(photo.image)) {
+        URL.revokeObjectURL(photo.url);
+        throw new Error(BLANK_PHOTO);
+      }
       if (
         !product &&
         effect.ready &&
+        effect.faceAvailable &&
         !(
           import.meta.env.DEV && (window as { skyFakeCue?: unknown }).skyFakeCue
         ) &&
-        performance.now() - effect.cues.current.faceAt > FACE_RECENT_MS
-      )
+        (!effect.cues.current.faceAt ||
+          performance.now() - effect.cues.current.faceAt > FACE_RECENT_MS)
+      ) {
+        URL.revokeObjectURL(photo.url);
         throw new Error(NO_FACE_YET);
+      }
       setFlash(true);
-      setTimeout(() => setFlash(false), 180);
+      flashTimer.current = window.setTimeout(() => setFlash(false), 180);
       if (!product) {
         s.setSelfie(photo);
         camera.stop();
@@ -222,26 +254,6 @@ export default function CameraStudio() {
       s.addProduct(photo);
       camera.stop();
       setCompleted(true);
-      // First product unlocks the prize wheel; its result goes on the poster.
-      if (!useStudio.getState().reward) {
-        setSpinOpen(true);
-        setMessage("Spin the wheel for your free gift!");
-        return;
-      }
-      await publish();
-    } catch (e) {
-      setMessage((e as Error).message);
-    } finally {
-      busyRef.current = false;
-      setBusy(false);
-    }
-  }
-  async function claim(reward: Reward) {
-    s.setReward(reward.id);
-    setSpinOpen(false);
-    busyRef.current = true;
-    setBusy(true);
-    try {
       await publish();
     } catch (e) {
       setMessage((e as Error).message);
@@ -257,12 +269,11 @@ export default function CameraStudio() {
     if (frameAsset(getTemplate(current.template)).status !== "ready")
       throw new Error("The frame is still loading. Please try again.");
     const c = document.createElement("canvas");
-    await instagramReady();
-    c.width = 1080;
-    c.height = POST_HEIGHT;
+    c.width = WIDTH;
+    c.height = HEIGHT;
     const ctx = c.getContext("2d");
     if (!ctx) throw new Error("Could not prepare your poster. Try again.");
-    renderInstagramPost(ctx, {
+    renderPoster(ctx, {
       template: getTemplate(current.template),
       selfie: current.selfie,
       products: current.products,
@@ -274,8 +285,16 @@ export default function CameraStudio() {
     // opens fast; Instagram accepts it and recompresses anyway.
     const blob = await canvasBlob(c, "image/jpeg", 0.92);
     c.width = c.height = 1;
+    if (
+      !mounted.current ||
+      useStudio.getState().token !== current.token ||
+      useStudio.getState().selfie?.id !== current.selfie.id
+    )
+      return;
     setPoster(blob);
     s.setSavedPoster(blob);
+    // The poster is ready: the step-by-step sharing window opens.
+    setWizard(true);
     // No automatic share here (it isn't a tap, so phones would refuse it):
     // the customer taps Post on Instagram, which opens the share sheet.
     setMessage("Your poster is ready! Tap Post on Instagram to share it.");
@@ -329,7 +348,6 @@ export default function CameraStudio() {
             className="hidden-video"
           />
           <Poster
-            chrome
             live={camera.ready && !completed}
             state={{
               template,
@@ -351,7 +369,7 @@ export default function CameraStudio() {
                   : undefined,
             }}
           />
-          {!product && !completed && effect.ready && (
+          {!product && !completed && effect.ready && effect.autoAvailable && (
             <div className="auto-capture" aria-live="polite">
               <button
                 className={`auto-capture-toggle ${autoCapture ? "on" : ""}`}
@@ -385,7 +403,7 @@ export default function CameraStudio() {
               className="inline-product-hint"
               style={{
                 left: `${template.product.x / 10.8}%`,
-                top: `${((HEADER + template.product.y) / POST_HEIGHT) * 100}%`,
+                top: `${(template.product.y / MIRROR_DESIGN_HEIGHT) * 100}%`,
                 width: `${template.product.w / 10.8}%`,
               }}
             >
@@ -421,6 +439,21 @@ export default function CameraStudio() {
           </button>
           {!completed && (
             <button
+              className="stage-flip icon-button"
+              aria-label={
+                camera.facingMode === "user"
+                  ? "Switch to back camera"
+                  : "Switch to front camera"
+              }
+              disabled={busy}
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={() => setFlipped((v) => !v)}
+            >
+              <SwitchCamera size={18} />
+            </button>
+          )}
+          {!completed && (
+            <button
               className="stage-close icon-button"
               aria-label={closed ? "Resume camera" : "Pause camera"}
               onClick={() => setClosed((v) => !v)}
@@ -429,29 +462,13 @@ export default function CameraStudio() {
             </button>
           )}
           {flash && <div className="shutter-flash" />}
-          {camera.denied && (
-            <div className="camera-denied" role="alert">
-              <Camera size={30} aria-hidden="true" />
-              <b>SKY needs your camera</b>
-              <p>
-                Your selfie is the ticket to your Diwali gift. Tap{" "}
-                <strong>Allow</strong> when your browser asks — we&apos;ll keep
-                asking.
-              </p>
-              <p className="camera-denied-help">
-                Blocked it? Tap the 🔒 or ⓘ next to the web address →
-                Permissions → Camera → Allow. On iPhone: Settings → Safari →
-                Camera → Allow.
-              </p>
-              <button className="spin-button" onClick={camera.retry}>
-                Allow camera
-              </button>
-            </div>
+          {camera.failure && (
+            <CameraAlert failure={camera.failure} retry={camera.retry} />
           )}
         </motion.div>
         <div className="camera-status" role="status">
-          {message ||
-            camera.error ||
+          {camera.error ||
+            message ||
             (product && camera.fallbackNotice) ||
             (!product && camera.ready && effect.status) ||
             (completed
@@ -460,9 +477,7 @@ export default function CameraStudio() {
                 ? product
                   ? "Selfie saved. Capture your purchase in the small box."
                   : "Tap Post on Instagram to take your selfie."
-                : closed
-                  ? "Camera paused. Tap the camera icon to resume."
-                  : "Starting camera…")}
+                : "Starting camera…")}
         </div>
         {camera.error && (
           <button
@@ -481,6 +496,20 @@ export default function CameraStudio() {
             <button className="text-button" onClick={retake}>
               <RefreshCw size={13} /> Retake product
             </button>
+            {!poster && (
+              <button
+                className="text-button"
+                disabled={busy}
+                onClick={() => {
+                  setBusy(true);
+                  void publish()
+                    .catch((e) => setMessage((e as Error).message))
+                    .finally(() => setBusy(false));
+                }}
+              >
+                Prepare poster again
+              </button>
+            )}
             <button className="text-button" onClick={() => s.setStep("edit")}>
               Edit poster
             </button>
@@ -503,16 +532,39 @@ export default function CameraStudio() {
           </div>
         )}
       </aside>
-      {spinOpen && (
-        <SpinWheel
-          getPrize={({ onQueue }) =>
-            spinPrize(s.phone ?? "", s.selfie?.blob, onQueue)
+      {wizard && poster && (
+        <ShareWizard
+          poster={poster}
+          caption={caption}
+          filename={`${filename}.jpg`}
+          onClose={() => setWizard(false)}
+        />
+      )}
+      {whatsappNudge && poster && !wizard && (
+        <WhatsAppNudge
+          onShare={() =>
+            void shareOnWhatsapp(poster, caption, `${filename}.jpg`)
           }
-          onClaim={(r) => void claim(r)}
+          onClose={() => setWhatsappNudge(false)}
         />
       )}
       {completed && (
         <section className="inline-caption-panel">
+          {poster && (
+            <WhatsAppButton
+              label="Share on WhatsApp Status"
+              onShare={() =>
+                void shareOnWhatsapp(poster, caption, `${filename}.jpg`)
+              }
+            />
+          )}
+          {poster && (
+            <ShareButtons
+              poster={poster}
+              caption={caption}
+              filename={`${filename}.jpg`}
+            />
+          )}
           <label htmlFor="inline-sky-caption">Your SKY Instagram caption</label>
           <textarea
             id="inline-sky-caption"

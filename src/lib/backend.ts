@@ -1,45 +1,62 @@
+import { committedRequest, deleteIf, openDatabase } from "./indexedDb";
+import { combineSignals } from "./abort";
+import { withLoader } from "./loading";
 import { replaceTemplates, type Template } from "../templates";
 
 // Same-origin by default (Vite proxies /api in dev); set VITE_API_URL otherwise.
-// The Vercel-hosted studio talks to the VPS API (a public URL, not a secret).
-const VPS_API = "https://87.232.72.141";
-const onVercel =
-  typeof location !== "undefined" && location.hostname.endsWith(".vercel.app");
 /** Backend origin; empty when the studio and API share one site. */
 export const API_ORIGIN = (
-  import.meta.env.VITE_API_URL ?? (onVercel ? VPS_API : "")
+  import.meta.env.VITE_API_URL ??
+  (import.meta.env.PROD ||
+  (typeof location !== "undefined" && location.hostname.endsWith(".vercel.app"))
+    ? "https://87.232.72.141"
+    : "")
 ).replace(/\/$/, "");
 const API = API_ORIGIN + "/api";
 /** Where /media files load from. On Vercel they go through its CDN (see
  *  vercel.json), so each image leaves the VPS once and loads from nearby. */
 export const MEDIA_ORIGIN =
-  onVercel && !import.meta.env.VITE_API_URL ? "" : API_ORIGIN;
+  typeof location !== "undefined" &&
+  location.hostname.endsWith(".vercel.app") &&
+  !import.meta.env.VITE_API_URL
+    ? ""
+    : API_ORIGIN;
 // Fallback when the event stream is unavailable (e.g. a proxy that buffers it).
-export const POLL_MS = 1000;
+export const POLL_MS = 30_000;
 
 let lastPayload = "";
 let lastVersion = "";
 let inFlight = false;
+let streamRevision = 0;
 
 function apply(text: string) {
   if (text === lastPayload) return;
-  lastPayload = text;
   replaceTemplates(JSON.parse(text) as Template[]);
+  lastPayload = text;
 }
 
 async function pollMirrors() {
   if (inFlight) return;
   inFlight = true;
+  const revision = streamRevision;
   try {
-    const v = await fetch(`${API}/mirrors/version/`, { cache: "no-store" });
+    const v = await fetch(`${API}/mirrors/version/`, {
+      cache: "no-store",
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
     if (!v.ok) return;
     const { version } = (await v.json()) as { version: string };
     if (version === lastVersion) return;
 
-    const res = await fetch(`${API}/mirrors/`, { cache: "no-store" });
+    const res = await fetch(`${API}/mirrors/`, {
+      cache: "no-store",
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
     if (!res.ok) return;
+    const payload = await res.text();
+    if (revision !== streamRevision) return;
+    apply(payload);
     lastVersion = version;
-    apply(await res.text());
   } catch {
     // Offline or backend down: keep showing the current themes.
   } finally {
@@ -57,6 +74,8 @@ export function startMirrorSync() {
     stream.addEventListener("mirrors", (e) => {
       try {
         apply((e as MessageEvent<string>).data);
+        streamRevision++;
+        lastVersion = "";
       } catch {
         // Ignore a malformed event; the next one replaces it.
       }
@@ -133,33 +152,48 @@ export const BRANCH: string = (() => {
     return "";
   }
 })();
-/** Name of the branch for this link, or an error if the link is switched off. */
-export async function fetchBranch(): Promise<
-  { name: string } | { error: string } | null
-> {
-  if (!BRANCH) return null;
-  try {
-    const res = await fetch(`${API}/branches/${encodeURIComponent(BRANCH)}/`, {
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-    });
-    const data = (await res.json()) as { name?: string; detail?: string };
-    if (res.ok && data.name) return { name: data.name };
-    if (res.status === 404) return { error: data.detail ?? ERRORS.unreachable };
-  } catch {
-    // Offline: sign-in reports it; the branch name is only decoration.
+// A double tap sends one request: an identical one already on its way is shared.
+const pendingPosts = new Map<string, Promise<unknown>>();
+function postJson<T>(
+  path: string,
+  body: unknown,
+  headers?: Record<string, string>,
+  signal?: AbortSignal,
+): Promise<T> {
+  const key =
+    body instanceof FormData || signal ? "" : path + JSON.stringify(body);
+  const running = key && pendingPosts.get(key);
+  if (running) return running as Promise<T>;
+  // The wheel shows its own spin; everything else shows the SKY loader.
+  const send = sendJson<T>(path, body, headers, signal);
+  const request = path === "/customers/spin/" ? send : withLoader(send);
+  if (key) {
+    pendingPosts.set(key, request);
+    void request.finally(() => pendingPosts.delete(key)).catch(() => {});
   }
-  return null;
+  return request;
 }
-async function postJson<T>(path: string, body: unknown): Promise<T> {
+async function sendJson<T>(
+  path: string,
+  body: unknown,
+  headers?: Record<string, string>,
+  signal?: AbortSignal,
+): Promise<T> {
   if (!navigator.onLine) throw new ApiError(ERRORS.offline);
   let res: Response;
   try {
     const form = body instanceof FormData;
     res = await fetch(`${API}${path}`, {
       method: "POST",
-      headers: form ? undefined : { "Content-Type": "application/json" },
+      headers: {
+        ...(form ? undefined : { "Content-Type": "application/json" }),
+        ...headers,
+      },
       body: form ? body : JSON.stringify(body),
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS * (form ? 3 : 1)),
+      signal: combineSignals([
+        AbortSignal.timeout(REQUEST_TIMEOUT_MS * (form ? 3 : 1)),
+        ...(signal ? [signal] : []),
+      ]),
     });
   } catch (e) {
     throw new ApiError(
@@ -186,42 +220,294 @@ async function postJson<T>(path: string, body: unknown): Promise<T> {
   }
   return data as T;
 }
-/** Signs the customer in by mobile number; returns their prize if already spun. */
-export const registerPhone = (phone: string) =>
-  postJson<{ phone: string; reward: string | null }>("/customers/register/", {
-    phone,
-    // The sign-in screen only submits after the consent box is ticked.
-    consent: true,
-    ...(BRANCH && { branch: BRANCH }),
+// The secret from the customer's WhatsApp link (?spin=…).
+export const SPIN_TOKEN =
+  typeof location === "undefined"
+    ? ""
+    : (new URLSearchParams(location.search).get("spin") ?? "");
+/** Who a WhatsApp link belongs to; their prize if they already spun. */
+let activeCustomer: { phone: string; token: string } | null = null;
+const pendingLinks = new Map<string, ReturnType<typeof readLink>>();
+export function fetchLink(token: string) {
+  let pending = pendingLinks.get(token);
+  if (!pending) {
+    const request = readLink(token);
+    pendingLinks.set(token, request);
+    void request
+      .finally(() => {
+        if (pendingLinks.get(token) === request) pendingLinks.delete(token);
+      })
+      .catch(() => {});
+    pending = request;
+  }
+  return withLoader(pending);
+}
+async function readLink(token: string) {
+  let res: Response;
+  try {
+    res = await fetch(`${API}/customers/link/${encodeURIComponent(token)}/`, {
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+  } catch {
+    throw new ApiError(ERRORS.unreachable);
+  }
+  const data = (await res.json().catch(() => ({}))) as {
+    phone?: string;
+    reward?: string | null;
+    items?: { id: string; label: string; image: string }[];
+    poster?: string | null;
+    name?: string;
+    instagram_id?: string;
+    next?: string;
+    video_review?: boolean;
+    detail?: string;
+  };
+  if (!res.ok || !data.phone)
+    throw new ApiError(data.detail ?? ERRORS.server, res.status);
+  activeCustomer = { phone: data.phone, token };
+  // Resume a pre-upgrade outbox item only after the server confirmed ownership.
+  void flushUploads();
+  return {
+    phone: data.phone,
+    reward: data.reward ?? null,
+    name: data.name ?? "",
+    instagramId: data.instagram_id ?? "",
+    items: data.items ?? [],
+    poster: data.poster ? MEDIA_ORIGIN + data.poster : null,
+    reviewed: !["terms", "spin", "review"].includes(data.next ?? ""),
+    termsAccepted: data.next !== "terms",
+    videoReview: Boolean(data.video_review),
+  };
+}
+export type BranchOption = { slug: string; name: string; phone?: string };
+/** Active stores for the manager page. */
+export async function fetchManagerBranches() {
+  let res: Response;
+  try {
+    res = await fetch(`${API}/manager/branches/`, {
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+  } catch {
+    throw new ApiError(ERRORS.unreachable);
+  }
+  if (!res.ok) throw new ApiError(ERRORS.server, res.status);
+  const branches: unknown = await res.json();
+  if (!Array.isArray(branches) || branches.some((branch) =>
+    !branch || typeof branch.name !== "string" || typeof branch.slug !== "string"
+  )) {
+    throw new ApiError(ERRORS.server, res.status);
+  }
+  return branches as BranchOption[];
+}
+// Phone photos are several MB; this size still reads perfectly and uploads fast.
+const UPLOAD_SIDE = 2600;
+async function shrinkPhoto(file: File): Promise<Blob> {
+  if (file.type === "application/pdf" || file.size < 1_500_000) return file;
+  try {
+    const bitmap = await createImageBitmap(file);
+    const scale = Math.min(
+      1,
+      UPLOAD_SIDE / Math.max(bitmap.width, bitmap.height),
+    );
+    const c = document.createElement("canvas");
+    c.width = Math.round(bitmap.width * scale);
+    c.height = Math.round(bitmap.height * scale);
+    c.getContext("2d")!.drawImage(bitmap, 0, 0, c.width, c.height);
+    bitmap.close();
+    return await new Promise<Blob>((resolve) =>
+      c.toBlob((b) => resolve(b ?? file), "image/jpeg", 0.92),
+    );
+  } catch {
+    return file;
+  }
+}
+/** Django reads the invoice (PDF text, or enhanced OCR) and keeps the
+ *  reading for the check; the text comes back to fill in the form. */
+export async function scanInvoice(file: File | Blob, name = "invoice") {
+  const form = new FormData();
+  const upload = file instanceof File ? await shrinkPhoto(file) : file;
+  const pdf = upload.type === "application/pdf";
+  form.append("invoice", upload, pdf ? "invoice.pdf" : `${name}.jpg`);
+  return postJson<{ scan: string; text: string }>("/manager/scan/", form);
+}
+/** Validates and saves the purchase; returns the customer's spin link. */
+export const checkPurchase = (form: FormData) =>
+  postJson<{ phone: string; link: string }>("/manager/check/", form);
+/** Accepts the terms; the video pledge brings the customer's Instagram ID. */
+export const acceptTerms = (
+  token: string,
+  videoReview: boolean,
+  instagramId: string,
+) =>
+  postJson<{ next: string }>("/customers/terms/", {
+    token,
+    accept: true,
+    video_review: videoReview,
+    instagram_id: instagramId,
   });
-export const NO_PHOTO = "Take your selfie first, then spin for your gift.";
+/** Star rating and review, sent once after the spin. */
+export const sendReview = (token: string, rating: number, review: string) =>
+  postJson<{ next: string }>("/customers/review/", { token, rating, review });
+// One id per open tab, so the admin can count who is on the site right now.
+const LIVE_MS = 30_000;
+// The screen is read when each ping goes out, so the admin sees where they are.
+export function startLivePing() {
+  const id = Math.random().toString(36).slice(2);
+  const ping = () => {
+    if (document.visibilityState !== "visible") return;
+    const screen =
+      document.querySelector("main h1")?.textContent?.slice(0, 40) ??
+      (document.querySelector(".camera-stage") ? "Mirror camera" : "");
+    void fetch(`${API}/live/`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        id,
+        role: SPIN_TOKEN ? "customer" : "manager",
+        screen,
+      }),
+      keepalive: true,
+    }).catch(() => {});
+  };
+  ping();
+  setInterval(ping, LIVE_MS);
+  document.addEventListener("visibilitychange", ping);
+}
+/** Phones have a 15-digit IMEI that passes the Luhn check; other products
+ *  print a serial in any format. Kept in sync with validate_imei in
+ *  backend/mirrors/serializers.py. */
+export function imeiOrSerialValid(value: string) {
+  const v = value.trim();
+  return /^\d{15}$/.test(v)
+    ? imeiValid(v)
+    : /^[A-Z0-9][A-Z0-9_-]{3,29}$/i.test(v);
+}
+/** Timeline entries; a lost one must never interrupt the customer. */
+export function trackSent(phone: string) {
+  void fetch(`${API}/manager/sent/`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ phone }),
+    keepalive: true,
+  }).catch(() => {});
+}
+/** kind: share_opened_<platform>, shared_<platform> or posted_<platform>. */
+export function trackShare(token: string, kind: string, url?: string) {
+  void fetch(`${API}/customers/event/`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token, kind, ...(url && { url }) }),
+    keepalive: true,
+  }).catch(() => {});
+}
+/** The Instagram ID or Facebook profile the customer shares from. */
+export const saveProfile = (
+  token: string,
+  platform: "instagram" | "facebook",
+  handle: string,
+) =>
+  postJson<{ handle: string }>("/customers/profile/", {
+    token,
+    platform,
+    handle,
+  });
+/** Records the link to the customer's own post, as proof they posted
+ *  (WhatsApp has no post link: the customer's confirmation is sent alone). */
+export const savePostLink = (token: string, platform: string, url = "") =>
+  postJson<{ ok: boolean }>("/customers/event/", {
+    token,
+    kind: `posted_${platform}`,
+    ...(url && { url }),
+  });
+/** A proof screenshot (WhatsApp Status, or our Instagram showing
+ *  "Following") for staff to verify. */
+export function uploadProof(
+  token: string,
+  kind: "whatsapp" | "follow",
+  screenshot: File,
+) {
+  const form = new FormData();
+  form.append("token", token);
+  form.append("screenshot", screenshot);
+  return postJson<{ status: string }>(`/customers/${kind}-proof/`, form);
+}
+export type RewardProgress = {
+  instagram_post: boolean;
+  instagram_follow: string;
+  whatsapp_status: string;
+  google_review_opened: boolean;
+  ready: boolean;
+};
+/** Every check the reward depends on: a quiet check, no loader. */
+export async function rewardProgress(token: string) {
+  const res = await fetch(
+    `${API}/customers/follow-proof/?token=${encodeURIComponent(token)}`,
+  );
+  if (!res.ok) throw new Error("progress");
+  return ((await res.json()) as { progress: RewardProgress }).progress;
+}
+/** Instagram and WhatsApp are done: the server unlocks the gift. */
+export const unlockGift = (token: string) =>
+  postJson<{ ok: boolean }>("/customers/event/", {
+    token,
+    kind: "gift_unlocked",
+  });
+// The uploaded poster's public address, once the server has it.
+let posterUrl = "";
+export const getPosterUrl = () => {
+  if (
+    !posterUrl ||
+    new URL(posterUrl, location.href).pathname.startsWith("/media/customers/")
+  )
+    return "";
+  return posterUrl;
+};
+const absolute = (url: string) =>
+  url.startsWith("http") ? url : new URL(url, location.href).href;
+// A phone's IMEI is 15 digits passing the Luhn check. Kept in sync with
+// imei_valid in backend/mirrors/serializers.py.
+export function imeiValid(imei: string) {
+  if (!/^\d{15}$/.test(imei)) return false;
+  let total = 0;
+  for (let i = 0; i < 15; i++) {
+    const n = Number(imei[i]) * (i % 2 ? 2 : 1);
+    total += n > 9 ? n - 9 : n;
+  }
+  return total % 10 === 0;
+}
 // How long a customer may wait in the queue when SKY is busy.
 const QUEUE_LIMIT_MS = 60_000;
-/** The server picks the prize, once per mobile number and once per face.
- *  The selfie goes with it: no photo, no spin. When the server is busy the
+/** The server picks the prize, once per customer. When it is busy the
  *  customer waits in line (onQueue reports it) and the request is retried. */
 export async function spinPrize(
-  phone: string,
-  selfie: Blob | null | undefined,
+  token: string,
   onQueue?: (waiting: boolean) => void,
+  signal?: AbortSignal,
 ) {
-  if (!selfie) throw new ApiError(NO_PHOTO, 400);
-  const form = new FormData();
-  form.append("phone", phone);
-  // The server reads the face from it; 1280 px is plenty and uploads fast.
-  form.append("selfie", await asJpeg(selfie, 1280), "selfie.jpg");
-  if (BRANCH) form.append("branch", BRANCH);
+  const budget = combineSignals([
+    AbortSignal.timeout(QUEUE_LIMIT_MS),
+    ...(signal ? [signal] : []),
+  ]);
+  budget.throwIfAborted();
   const started = Date.now();
   for (;;) {
     try {
       const { reward } = await postJson<{ reward: string }>(
         "/customers/spin/",
-        form,
+        { token },
+        undefined,
+        budget,
       );
       onQueue?.(false);
       return reward;
     } catch (e) {
       const err = e as ApiError;
+      if (budget.aborted) {
+        onQueue?.(false);
+        throw new ApiError(
+          signal?.aborted ? "Spin cancelled." : ERRORS.timeout,
+        );
+      }
       // Only a busy server queues. A rate limit (429), network errors and
       // timeouts stop at once with their message.
       const queued = err.status === 503;
@@ -231,13 +517,27 @@ export async function spinPrize(
       }
       onQueue?.(true);
       const wait = Math.min(15, err.retryAfter || 5) * 1000;
-      await new Promise((r) =>
-        setTimeout(r, wait * (0.8 + Math.random() * 0.4)),
-      );
+      await new Promise<void>((resolve, reject) => {
+        const finish = () => {
+          budget.removeEventListener("abort", abort);
+          resolve();
+        };
+        const timer = setTimeout(finish, wait * (0.8 + Math.random() * 0.4));
+        const abort = () => {
+          clearTimeout(timer);
+          budget.removeEventListener("abort", abort);
+          reject(
+            new ApiError(signal?.aborted ? "Spin cancelled." : ERRORS.timeout),
+          );
+        };
+        budget.addEventListener("abort", abort, { once: true });
+        if (budget.aborted) abort();
+      });
     }
   }
 }
 type Upload = {
+  token?: string | null;
   session: string;
   phone?: string | null;
   mirror: string;
@@ -248,18 +548,28 @@ type Upload = {
 };
 // Uploads wait in an on-device outbox until the backend confirms them, so a
 // dropped connection, a down backend or a closed tab never loses a customer.
-type Pending = Upload & { queuedAt: number };
+type Pending = Upload & {
+  queuedAt: number;
+  revision?: string;
+  failed?: boolean;
+};
 const OUTBOX = "sky-upload-outbox",
   RETRY_MS = 30_000;
 let outboxDb: Promise<IDBDatabase> | null = null;
 function outbox() {
   if (!outboxDb)
-    outboxDb = new Promise((resolve, reject) => {
-      const req = indexedDB.open(OUTBOX, 1);
-      req.onupgradeneeded = () => req.result.createObjectStore("uploads");
-      req.onsuccess = () => resolve(req.result);
-      req.onerror = () => reject(req.error);
-    });
+    outboxDb = openDatabase(OUTBOX, "uploads")
+      .then((db) => {
+        db.onversionchange = () => {
+          db.close();
+          outboxDb = null;
+        };
+        return db;
+      })
+      .catch((error) => {
+        outboxDb = null;
+        throw error;
+      });
   return outboxDb;
 }
 async function outboxRequest<T>(
@@ -267,36 +577,55 @@ async function outboxRequest<T>(
   run: (store: IDBObjectStore) => IDBRequest<T>,
 ) {
   const db = await outbox();
-  return new Promise<T>((resolve, reject) => {
-    const req = run(db.transaction("uploads", mode).objectStore("uploads"));
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
-  });
+  return committedRequest(db, "uploads", mode, run);
 }
 async function send(data: Upload) {
   const form = new FormData();
   form.append("session", data.session);
+  const token =
+    data.token ||
+    (activeCustomer && activeCustomer.phone === data.phone
+      ? activeCustomer.token
+      : undefined);
+  if (token) form.append("token", token);
   form.append("mirror", data.mirror);
   if (data.phone) form.append("phone", data.phone);
   if (data.reward) form.append("reward", data.reward);
   if (data.branch) form.append("branch", data.branch);
-  const ext = (b: Blob) => (b.type === "image/png" ? "png" : "jpg");
+  const ext = (b: Blob) =>
+    b.type === "image/png" ? "png" : b.type === "image/webp" ? "webp" : "jpg";
   form.append("poster", data.poster, `poster.${ext(data.poster)}`);
   if (data.selfie)
     form.append("selfie", data.selfie, `selfie.${ext(data.selfie)}`);
-  return fetch(`${API}/customers/`, { method: "POST", body: form });
+  const response = await fetch(`${API}/customers/`, {
+    method: "POST",
+    body: form,
+    signal: AbortSignal.timeout(45_000),
+  });
+  if (response.ok) {
+    const result = await response
+      .clone()
+      .json()
+      .catch(() => ({}));
+    if (result.poster) posterUrl = absolute(result.poster);
+  }
+  return response;
 }
 // Removes an entry only if it wasn't replaced by a newer export meanwhile.
 async function settle(sent: Pending) {
-  const current = await outboxRequest<Pending | undefined>("readonly", (s) =>
-    s.get(sent.session),
+  return deleteIf<Pending>(
+    await outbox(),
+    "uploads",
+    sent.session,
+    (current) =>
+      current.revision === sent.revision && current.queuedAt === sent.queuedAt,
   );
-  if (current?.queuedAt === sent.queuedAt)
-    await outboxRequest("readwrite", (s) => s.delete(sent.session));
 }
 // What happened to this customer's poster upload, for an on-screen status line.
 export type UploadState = "idle" | "saving" | "saved" | "retrying" | "failed";
 let uploadState: UploadState = "idle";
+let currentUpload: string | null = null;
+let currentRevision = "";
 const uploadListeners = new Set<() => void>();
 function setUploadState(next: UploadState) {
   uploadState = next;
@@ -304,7 +633,11 @@ function setUploadState(next: UploadState) {
 }
 export const getUploadState = () => uploadState;
 /** A new customer starts with no upload status. */
-export const clearUploadState = () => setUploadState("idle");
+export const clearUploadState = () => {
+  currentUpload = null;
+  currentRevision = "";
+  setUploadState("idle");
+};
 export function subscribeUpload(fn: () => void) {
   uploadListeners.add(fn);
   return () => {
@@ -312,38 +645,75 @@ export function subscribeUpload(fn: () => void) {
   };
 }
 let flushing = false;
+let flushAgain = false;
 export async function flushUploads() {
-  if (flushing) return;
+  if (flushing) {
+    flushAgain = true;
+    return;
+  }
   flushing = true;
   try {
-    const pending = await outboxRequest<Pending[]>("readonly", (s) =>
-      s.getAll(),
-    );
-    for (const item of pending) {
-      let res: Response;
-      try {
-        res = await send(item);
-      } catch {
-        setUploadState("retrying"); // Offline or backend down: retry later.
-        return;
+    do {
+      flushAgain = false;
+      // Read one Blob record at a time rather than decoding an entire backlog.
+      const keys = await outboxRequest("readonly", (s) => s.getAllKeys());
+      for (const key of keys) {
+        const item = await outboxRequest<Pending | undefined>("readonly", (s) =>
+          s.get(key),
+        );
+        if (!item || item.failed) continue;
+        const update = (state: UploadState) => {
+          if (
+            currentUpload === item.session &&
+            currentRevision === item.revision
+          )
+            setUploadState(state);
+        };
+        let res: Response;
+        try {
+          res = await send(item);
+        } catch {
+          update("retrying"); // Offline or backend down: retry later.
+          return;
+        }
+        // Invalid uploads remain available for staff recovery, but are not
+        // automatically retried. A corrected export replaces the failed record.
+        const permanent =
+          res.status >= 400 &&
+          res.status < 500 &&
+          res.status !== 408 &&
+          res.status !== 429;
+        if (res.ok) {
+          if (await settle(item)) update("saved");
+          else flushAgain = true;
+        } else if (permanent) {
+          const db = await outbox();
+          await new Promise<void>((resolve, reject) => {
+            const tx = db.transaction("uploads", "readwrite"),
+              store = tx.objectStore("uploads");
+            const read = store.get(item.session);
+            read.onsuccess = () => {
+              const current = read.result as Pending | undefined;
+              if (
+                current?.revision === item.revision &&
+                current?.queuedAt === item.queuedAt
+              )
+                store.put({ ...current, failed: true }, item.session);
+            };
+            tx.oncomplete = () => resolve();
+            tx.onabort = tx.onerror = () => reject(tx.error);
+          });
+          update("failed");
+        } else {
+          update("retrying");
+          return;
+        }
       }
-      // 4xx other than throttling means the upload itself is invalid; drop it
-      // rather than retrying forever.
-      const permanent =
-        res.status >= 400 &&
-        res.status < 500 &&
-        res.status !== 408 &&
-        res.status !== 429;
-      if (res.ok || permanent) await settle(item);
-      else {
-        setUploadState("retrying");
-        return;
-      }
-      if (permanent) setUploadState("failed");
-    }
-    if (uploadState !== "failed" && pending.length) setUploadState("saved");
+    } while (flushAgain);
   } catch {
-    // IndexedDB unavailable; uploadCustomer already sent directly.
+    // A committed enqueue can be followed by a failed read transaction.
+    // Surface that failure rather than leaving this customer's UI on Saving.
+    if (currentUpload && uploadState !== "saved") setUploadState("failed");
   } finally {
     flushing = false;
   }
@@ -361,45 +731,65 @@ export function startUploadSync() {
 // The server stores ≤200 KB photos anyway, so a PNG (3–5 MB) is re-encoded as
 // JPEG on the phone first: uploads get ~10× smaller and finish sooner.
 async function asJpeg(blob: Blob, maxSide = Infinity): Promise<Blob> {
+  let bitmap: ImageBitmap | undefined;
+  let canvas: HTMLCanvasElement | undefined;
   try {
-    const bitmap = await createImageBitmap(blob);
+    bitmap = await createImageBitmap(blob);
     const scale = Math.min(1, maxSide / Math.max(bitmap.width, bitmap.height));
     if (blob.type === "image/jpeg" && scale === 1) {
-      bitmap.close();
       return blob;
     }
-    const canvas = document.createElement("canvas");
+    canvas = document.createElement("canvas");
     canvas.width = Math.round(bitmap.width * scale);
     canvas.height = Math.round(bitmap.height * scale);
-    canvas.getContext("2d")!.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-    bitmap.close();
+    canvas
+      .getContext("2d")!
+      .drawImage(bitmap, 0, 0, canvas.width, canvas.height);
     const jpeg = await new Promise<Blob | null>((resolve) =>
-      canvas.toBlob(resolve, "image/jpeg", 0.9),
+      canvas!.toBlob(resolve, "image/jpeg", 0.9),
     );
     return jpeg && jpeg.size < blob.size ? jpeg : blob;
   } catch {
     return blob;
+  } finally {
+    bitmap?.close();
+    if (canvas) canvas.width = canvas.height = 1;
   }
 }
 
 export async function uploadCustomer(data: Upload) {
+  currentUpload = data.session;
+  const revision = crypto.randomUUID();
+  currentRevision = revision;
+  latestExports.set(data.session, revision);
   setUploadState("saving");
   data = {
     ...data,
     branch: data.branch ?? (BRANCH || undefined),
-    poster: await asJpeg(data.poster),
+    poster: await asJpeg(data.poster, 1280),
     selfie: data.selfie && (await asJpeg(data.selfie)),
   };
+  // Encoding may complete out of order when a customer exports twice.
+  if (latestExports.get(data.session) !== revision) return;
   try {
     // Keyed by session: a re-export replaces that customer's queued upload.
     await outboxRequest("readwrite", (s) =>
-      s.put({ ...data, queuedAt: Date.now() } satisfies Pending, data.session),
+      s.put(
+        { ...data, queuedAt: Date.now(), revision } satisfies Pending,
+        data.session,
+      ),
     );
   } catch {
     // No on-device storage (e.g. private mode): best-effort direct send.
     const res = await send(data).catch(() => null);
-    setUploadState(res?.ok ? "saved" : "failed");
+    if (currentUpload === data.session && currentRevision === revision)
+      setUploadState(res?.ok ? "saved" : "failed");
+    if (latestExports.get(data.session) === revision)
+      latestExports.delete(data.session);
     return;
   }
   await flushUploads();
+  if (latestExports.get(data.session) === revision)
+    latestExports.delete(data.session);
 }
+const latestExports = new Map<string, string>();

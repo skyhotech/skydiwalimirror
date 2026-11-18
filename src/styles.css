@@ -311,7 +311,7 @@ button {
 }
 .hero-poster {
   width: 292px;
-  aspect-ratio: 9/16;
+  aspect-ratio: 4 / 5;
   transform: rotate(5deg);
   position: relative;
   box-shadow: 10px 20px 45px #182b291f;
@@ -752,7 +752,7 @@ footer p {
 }
 .camera-stage {
   width: 290px;
-  aspect-ratio: 9/16;
+  aspect-ratio: 4 / 5;
   position: relative;
   overflow: hidden;
   border-radius: 12px;
@@ -803,6 +803,17 @@ footer p {
   width: 32px;
   height: 32px;
 }
+.stage-flip {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  color: #eee;
+  background: #172b2877;
+  width: 32px;
+  height: 32px;
+  z-index: 3;
+}
+.stage-flip:hover,
 .stage-close:hover {
   background: #172b28;
 }
@@ -2274,7 +2285,6 @@ body {
 .poster-post-action:disabled {
   opacity: 0.5;
 }
-/* Previews carry the Instagram footer (330 of 2400 px); keep buttons above it. */
 .camera-workspace .instagram-shutter.poster-post-action {
   bottom: 15%;
   min-height: 50px;
@@ -2290,8 +2300,7 @@ body {
 }
 .editor-poster .drag-hint {
   bottom: auto;
-  /* Just below the Instagram header band (150 of 2400 px). */
-  top: calc(6.25% + 8px);
+  top: 8px;
 }
 .editor-poster .poster-post-action {
   bottom: 15%;
@@ -2861,27 +2870,42 @@ body {
   );
   animation: phone-mandala 120s linear infinite reverse;
 }
-.phone-particle {
+/* Clay agal lamps with a soft, stationary flame flicker. */
+.deepam-lamps {
   position: absolute;
-  bottom: -20px;
-  border-radius: 50%;
-  opacity: 0;
-  /* "both": hidden before start, so no particles sit frozen at the bottom. */
-  animation: phone-float linear infinite both;
-  will-change: transform, opacity;
+  inset: auto 4% 3%;
+  display: flex;
+  justify-content: space-between;
+  color: #f3b64e;
 }
-.phone-spark {
-  background: #f3cf7a;
-  box-shadow: 0 0 10px 2px rgba(243, 207, 122, 0.7);
+.deepam-lamp {
+  position: relative;
+  width: clamp(24px, 7vw, 76px);
+  aspect-ratio: 2.5;
+  border-top: 3px solid #ffcf69;
+  border-radius: 10% 10% 50% 50% / 10% 10% 90% 90%;
+  background: linear-gradient(#c36129, #6b241d);
+  box-shadow: 0 -8px 26px #fca92880;
 }
-.phone-diya {
-  background: radial-gradient(
-    circle at 50% 35%,
-    #fff4dc,
-    #fa7e1e 55%,
-    transparent 70%
-  );
-  box-shadow: 0 0 16px 4px rgba(250, 126, 30, 0.55);
+.deepam-lamp::before {
+  content: "";
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  width: 26%;
+  height: 115%;
+  translate: -50%;
+  border-radius: 65% 45% 55% 45% / 85% 65% 35% 15%;
+  background: radial-gradient(ellipse at 50% 78%, #fffce8 18%, #ffd34f 51%, #f47c24 79%);
+  box-shadow: 0 0 18px 4px #ffa43a99;
+  transform-origin: bottom;
+  animation: deepam-flicker 2.4s ease-in-out infinite alternate;
+}
+.deepam-lamp:nth-child(even)::before {
+  animation-delay: -1.2s;
+}
+@keyframes deepam-flicker {
+  to { transform: skewX(-7deg) scaleY(.88); opacity: .85; }
 }
 .phone-shake {
   position: relative;
@@ -3088,19 +3112,7 @@ body {
     rotate: 360deg;
   }
 }
-@keyframes phone-float {
-  0% {
-    transform: translateY(0) scale(0.6);
-    opacity: 0;
-  }
-  15% {
-    opacity: 1;
-  }
-  100% {
-    transform: translateY(-110dvh) scale(1.1);
-    opacity: 0;
-  }
-}
+
 @keyframes phone-logo-spin {
   to {
     transform: rotate(360deg);
@@ -3128,7 +3140,7 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .phone-glow,
   .phone-mandala,
-  .phone-particle,
+  .deepam-lamp::before,
   .phone-logo,
   .phone-logo img,
   .phone-title,
@@ -3137,13 +3149,10 @@ body {
     animation: none !important;
   }
 }
-/* Post on Instagram: scales with the screen, never wraps, sits above the
-   Instagram footer band of the preview. */
+/* Keep the share action within the width of the 4:5 preview. */
 .camera-workspace .instagram-shutter.poster-post-action,
 .editor-poster .poster-post-action {
-  /* The poster is letterboxed in the stage (1080 × 2400, stage = 100dvh − 84px
-     tall), so cap the button at 90% of the poster's on-screen width too. */
-  width: min(90%, 440px, (100dvh - 84px) * 0.45 * 0.9);
+  width: min(90%, 440px, (100dvh - 84px) * 0.8 * 0.9);
   max-width: none;
   min-height: clamp(48px, 6.5dvh, 62px);
   padding: 0 clamp(14px, 4vw, 24px);
@@ -3350,13 +3359,6 @@ body {
     animation: none !important;
   }
 }
-/* Diwali crackers behind the sign-in card. */
-.phone-fireworks {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-}
 .spin-wheel-art {
   display: block;
   width: 100%;
@@ -3441,3 +3443,522 @@ html.no-pull-refresh body {
     animation: none;
   }
 }
+
+/* Manager page */
+.manager-card {
+  max-height: calc(100dvh - 32px);
+  overflow-y: auto;
+  text-align: left;
+}
+.manager-note {
+  text-align: center;
+}
+.manager-card .phone-title {
+  text-align: center;
+}
+.manager-input {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 44px;
+  padding: 10px 12px;
+  border: 1px solid rgb(214 164 71 / 55%);
+  border-radius: 12px;
+  background: #fffaf0;
+  color: #3c2418;
+  font: inherit;
+}
+.manager-input:focus {
+  outline: 2px solid #d6a447;
+}
+.manager-card > label {
+  display: block;
+  margin-top: 10px;
+}
+.manager-row {
+  display: flex;
+  gap: 8px;
+}
+.manager-row .manager-input {
+  flex: 1;
+  min-width: 0;
+}
+.manager-scan {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 12px;
+  background: #7a1631;
+  color: #fff4dc;
+  font: inherit;
+}
+.manager-branch {
+  position: relative;
+}
+/* In the page flow: the scrolling card would clip a floating list. */
+.manager-options {
+  max-height: 200px;
+  margin: 4px 0 0;
+  padding: 4px;
+  overflow-y: auto;
+  list-style: none;
+  border-radius: 12px;
+  background: #fffaf0;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 30%);
+}
+.manager-options li {
+  padding: 10px;
+  border-radius: 8px;
+  color: #3c2418;
+  cursor: pointer;
+}
+.manager-options li:hover {
+  background: #f7e7cc;
+}
+.manager-camera {
+  position: relative;
+  overflow: hidden;
+  margin-top: 8px;
+  border-radius: 12px;
+  background: #000;
+}
+.manager-camera video {
+  display: block;
+  width: 100%;
+  height: 220px;
+  object-fit: cover;
+}
+.manager-camera::after {
+  content: "";
+  position: absolute;
+  inset: 50% 8% auto;
+  height: 2px;
+  background: #d22856;
+}
+.manager-whatsapp {
+  background: #1f8f55 !important;
+  color: #fff !important;
+}
+.share-buttons {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.share-buttons button {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  min-height: 60px;
+  padding: 8px 2px;
+  border: 0;
+  border-radius: 12px;
+  background: #7a1631;
+  color: #fff4dc;
+  font: inherit;
+  font-size: 12px;
+}
+.manager-pick {
+  flex: 1;
+  justify-content: center;
+  margin-top: 0 !important;
+  cursor: pointer;
+}
+.manager-card .phone-logo {
+  display: block;
+  margin-inline: auto;
+}
+.saved-poster {
+  display: block;
+  width: auto;
+  max-width: 100%;
+  max-height: 75vh;
+  margin: 12px auto;
+  border-radius: 14px;
+}
+.review-stars {
+  display: flex;
+  justify-content: center;
+  gap: 6px;
+  margin-top: 12px;
+}
+.review-stars button {
+  padding: 2px;
+  border: 0;
+  background: none;
+  cursor: pointer;
+}
+.review-label {
+  min-height: 1.4em;
+  font-weight: 700;
+  color: #7a1631;
+}
+.review-card textarea {
+  resize: vertical;
+}
+.terms-lang {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 auto 6px;
+  padding: 6px 12px;
+  border: 1px solid #d6a447;
+  border-radius: 99px;
+  background: #fff8ea;
+  color: #7a1631;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+}
+.terms-list {
+  display: grid;
+  gap: 10px;
+  margin: 12px 0;
+  padding-left: 20px;
+  font-size: 14px;
+  line-height: 1.5;
+}
+.terms-check {
+  display: flex !important;
+  align-items: flex-start;
+  gap: 10px;
+  margin-top: 12px;
+  font-weight: 600;
+}
+.terms-check input {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  margin: 0;
+  accent-color: #d22856;
+}
+.iphone-banner {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  margin-bottom: 12px;
+  padding: 10px 14px;
+  border: 2px solid #d6a447;
+  border-radius: 18px;
+  background: linear-gradient(135deg, #17120d, #3a1622);
+  color: #fff4dc;
+  box-shadow: 0 10px 26px rgba(23, 18, 13, 0.35);
+  animation: iphone-glow 2.4s ease-in-out infinite;
+}
+.iphone-banner img {
+  flex: none;
+  width: 44px;
+  height: auto;
+  border-radius: 8px;
+  animation: iphone-bob 2.4s ease-in-out infinite;
+}
+.iphone-banner b {
+  display: block;
+  color: #f3cf7a;
+  font-size: 16px;
+}
+.iphone-banner span {
+  display: block;
+  font-size: 12.5px;
+  opacity: 0.85;
+}
+.iphone-offer {
+  text-align: center;
+}
+.iphone-offer-img {
+  display: block;
+  width: 96px;
+  margin: 0 auto 8px;
+  border-radius: 14px;
+  box-shadow: 0 12px 26px rgba(23, 18, 13, 0.3);
+  animation: iphone-bob 2.4s ease-in-out infinite;
+}
+.iphone-offer form {
+  text-align: left;
+}
+.iphone-offer-actions {
+  display: grid;
+  gap: 10px;
+  margin-top: 16px;
+}
+@keyframes iphone-bob {
+  50% {
+    transform: translateY(-5px) rotate(-3deg);
+  }
+}
+@keyframes iphone-glow {
+  50% {
+    box-shadow: 0 10px 34px rgba(214, 164, 71, 0.55);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .iphone-banner,
+  .iphone-banner img,
+  .iphone-offer-img {
+    animation: none;
+  }
+}
+.phone-gate:has(> .iphone-banner) {
+  flex-direction: column;
+  align-items: center;
+}
+.phone-gate > .iphone-banner {
+  max-width: 440px;
+}
+.notice-shade {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: rgba(23, 18, 13, 0.6);
+}
+.notice-window {
+  width: min(380px, 100%);
+  /* A grid item can't shrink below its content by default: on a 390 px phone
+     the Share Wizard's step pills pushed the window off screen. */
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 26px 22px 20px;
+  border: 2px solid #d6a447;
+  border-radius: 22px;
+  background: #fffaf0;
+  color: #3c2418;
+  text-align: center;
+  box-shadow: 0 30px 70px rgba(0, 0, 0, 0.4);
+}
+.notice-icon {
+  display: grid;
+  place-items: center;
+  width: 56px;
+  height: 56px;
+  margin: 0 auto 10px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #7a1631, #d22856);
+  color: #fff4dc;
+  font-size: 26px;
+  font-weight: 800;
+}
+.notice-window h2 {
+  margin: 0 0 8px;
+  font-size: 20px;
+  color: #7a1631;
+}
+.notice-window p {
+  margin: 0 0 10px;
+  line-height: 1.5;
+}
+.notice-amount {
+  font-weight: 700;
+}
+.share-window {
+  position: relative;
+  text-align: left;
+}
+.share-window h2 {
+  text-align: center;
+}
+.share-close {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border: 0;
+  border-radius: 50%;
+  background: #f1e8da;
+  color: #3c2418;
+}
+.camera-help-steps {
+  margin: 6px 0 12px;
+  padding-left: 20px;
+  text-align: left;
+  font-size: 14px;
+  line-height: 1.5;
+}
+.camera-help-steps li + li {
+  margin-top: 4px;
+}
+.sky-loader {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  /* Only shows progress: taps always reach the page underneath. */
+  pointer-events: none;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 14px;
+  background: rgba(255, 250, 240, 0.72);
+  backdrop-filter: blur(3px);
+  color: #7a1631;
+  font-weight: 700;
+}
+.sky-loader img {
+  width: 96px;
+  height: 96px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 10px 30px rgba(122, 22, 49, 0.3);
+  animation: sky-loader-spin 1s linear infinite;
+}
+@keyframes sky-loader-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sky-loader img {
+    animation-duration: 3s;
+  }
+}
+.crash-screen {
+  display: grid;
+  place-content: center;
+  gap: 12px;
+  min-height: 100dvh;
+  padding: 24px;
+  text-align: center;
+  background: #fffaf0;
+  color: #3c2418;
+}
+.whatsapp-cta {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 54px;
+  margin: 0 0 12px;
+  border: 0;
+  border-radius: 999px;
+  background: linear-gradient(135deg, #25d366, #128c7e);
+  color: #fff;
+  font: inherit;
+  font-size: 17px;
+  font-weight: 800;
+  box-shadow: 0 10px 24px rgba(18, 140, 126, 0.35);
+  cursor: pointer;
+  animation: wa-pulse 2.4s ease-in-out infinite;
+}
+@keyframes wa-pulse {
+  50% {
+    box-shadow: 0 10px 34px rgba(37, 211, 102, 0.6);
+  }
+}
+.wa-icon {
+  background: linear-gradient(135deg, #25d366, #128c7e) !important;
+}
+@media (prefers-reduced-motion: reduce) {
+  .whatsapp-cta {
+    animation: none;
+  }
+}
+.share-wizard {
+  text-align: center;
+}
+.share-wizard form {
+  text-align: left;
+}
+.wizard-steps {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px;
+  margin: 0 0 14px;
+  padding: 0 28px; /* clear of the close button */
+  list-style: none;
+  font-size: 12px;
+  font-weight: 700;
+}
+.wizard-steps li {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border-radius: 99px;
+  background: #f1e8da;
+  color: #8a7a68;
+}
+.wizard-steps li.now {
+  background: #7a1631;
+  color: #fff4dc;
+}
+.wizard-steps li.done {
+  background: #2b9f6b;
+  color: #fff;
+}
+.ig-icon {
+  background: linear-gradient(135deg, #feda75, #fa7e1e, #d62976, #962fbf) !important;
+}
+.gift-icon {
+  background: linear-gradient(135deg, #d6a447, #f3cf7a) !important;
+  color: #7a1631 !important;
+}
+.gift-name {
+  font-size: 22px;
+  font-weight: 800;
+  color: #7a1631;
+}
+.share-wizard {
+  position: relative;
+}
+.wizard-upload {
+  display: flex !important;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.wizard-wait {
+  width: 44px;
+  height: 44px;
+  margin: 8px auto;
+  border: 4px solid #f1e8da;
+  border-top-color: #25d366;
+  border-radius: 50%;
+  animation: sky-loader-spin 0.9s linear infinite;
+}
+.wizard-progress {
+  display: grid;
+  gap: 6px;
+  margin: 10px 0;
+  padding: 0;
+  list-style: none;
+  text-align: left;
+  font-weight: 600;
+}
+.wizard-progress li {
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: #fff4dc;
+}
+.wizard-progress li.done {
+  background: #e6f6ee;
+  color: #1d6b47;
+}
+.wizard-progress li.bad {
+  background: #fdecea;
+  color: #b3261e;
+}
+a.spin-button.phone-continue {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  text-decoration: none;
+}
+
+.storage-warning { position: relative; z-index: 50; padding: 12px 16px; background: #fff4db; color: #653d00; }
+.stage-close { z-index: 4; }
+
+.stage-close { position: absolute; top: 16px; left: 16px; right: auto; }

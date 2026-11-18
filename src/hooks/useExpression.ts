@@ -14,12 +14,16 @@ export function useExpression(
   const [canvas] = useState(() => document.createElement("canvas"));
   const output = useRef(canvas);
   const [status, setStatus] = useState(""),
-    [ready, setReady] = useState(false);
+    [ready, setReady] = useState(false),
+    [faceAvailable, setFaceAvailable] = useState(false),
+    [gestureAvailable, setGestureAvailable] = useState(false);
   /** Latest smile strength (0–1), hand gesture and when a face was last
    *  seen (performance.now()), for hands-free capture and the selfie check. */
   const cues = useRef({ smile: 0, gesture: "", faceAt: 0 });
   useEffect(() => {
     setReady(false);
+    setFaceAvailable(false);
+    setGestureAvailable(false);
     if (!active) {
       setStatus("");
       return;
@@ -65,7 +69,10 @@ export function useExpression(
               minTrackingConfidence: 0.7,
             });
             if (dead) loaded.close();
-            else face = loaded;
+            else {
+              face = loaded;
+              setFaceAvailable(true);
+            }
           })(),
           // Hand gestures are a second model: only on phones with headroom.
           (async () => {
@@ -79,7 +86,10 @@ export function useExpression(
               numHands: 1,
             });
             if (dead) loaded.close();
-            else gestures = loaded;
+            else {
+              gestures = loaded;
+              setGestureAvailable(true);
+            }
           })(),
         ]);
         if (dead) return;
@@ -124,6 +134,7 @@ export function useExpression(
                 } catch {
                   face.close();
                   face = null;
+                  setFaceAvailable(false);
                   cues.current.smile = 0;
                 }
                 lastFace = now;
@@ -138,12 +149,17 @@ export function useExpression(
                 } catch {
                   gestures.close();
                   gestures = null;
+                  setGestureAvailable(false);
                   cues.current.gesture = "";
                 }
                 lastGesture = now;
               }
               setReady(true);
-              setStatus("Tap Capture when you’re ready");
+              setStatus(
+                face
+                  ? "Tap Capture when you’re ready"
+                  : "Face detection unavailable. You can still take a photo manually.",
+              );
             } catch {
               setReady(false);
               setStatus(
@@ -167,5 +183,13 @@ export function useExpression(
       cues.current = { smile: 0, gesture: "", faceAt: 0 };
     };
   }, [active, video, canvas]);
-  return { output, status, ready, cues };
+  return {
+    output,
+    status,
+    ready,
+    faceAvailable,
+    gestureAvailable,
+    autoAvailable: faceAvailable || gestureAvailable,
+    cues,
+  };
 }

@@ -6,11 +6,13 @@ const messages: Record<string, string> = {
   NotReadableError: "The camera is busy. Close other camera apps and retry.",
   SecurityError: "Camera access requires HTTPS or localhost.",
 };
-// How often to ask again for a refused camera.
-const ASK_AGAIN_MS = 4000;
+// This is a failure deadline, never a substitute for observing playable frames.
+const START_DEADLINE_MS = 30_000;
 export function useCamera(facing: "user" | "environment", active: boolean) {
   const videoRef = useRef<HTMLVideoElement>(null),
-    streamRef = useRef<MediaStream | null>(null);
+    streamRef = useRef<MediaStream | null>(null),
+    generation = useRef(0),
+    releaseListeners = useRef<() => void>(() => {});
   const [error, setError] = useState(""),
     [ready, setReady] = useState(false),
     [readyFacing, setReadyFacing] = useState(""),
@@ -18,24 +20,54 @@ export function useCamera(facing: "user" | "environment", active: boolean) {
     [fallbackNotice, setFallbackNotice] = useState(""),
     [retry, setRetry] = useState(0),
     [denied, setDenied] = useState(false),
+    [failure, setFailure] = useState(""),
     [torch, setTorch] = useState(false),
     [torchSupported, setTorchSupported] = useState(false);
   const stop = useCallback(() => {
+    // Invalidate even requests whose getUserMedia/play promise is still pending.
+    generation.current++;
+    releaseListeners.current();
+    releaseListeners.current = () => {};
     streamRef.current?.getTracks().forEach((t) => t.stop());
     streamRef.current = null;
+    const video = videoRef.current;
+    if (video) {
+      video.pause();
+      video.srcObject = null;
+    }
     setReady(false);
+    setReadyFacing("");
     setTorch(false);
+    setTorchSupported(false);
   }, []);
   useEffect(() => {
     let cancelled = false;
     stop();
     setError("");
+    setFailure("");
     setFallbackNotice("");
-    setTorchSupported(false);
+    const attempt = generation.current;
+    const current = () =>
+      !cancelled &&
+      generation.current === attempt &&
+      active &&
+      !document.hidden;
+    const fail = (message: string, name = "CameraError") => {
+      if (!current()) return;
+      stop();
+      setFailure(name);
+      setError(message);
+    };
+    const deadline = window.setTimeout(() => {
+      fail(
+        "Camera did not provide a picture. Check camera permissions and other camera apps, then retry.",
+      );
+    }, START_DEADLINE_MS);
+    releaseListeners.current = () => window.clearTimeout(deadline);
     async function start() {
-      if (!active || document.hidden) return;
+      if (!current()) return;
       if (!navigator.mediaDevices?.getUserMedia) {
-        setError("Camera access requires HTTPS or localhost.");
+        fail("Camera access requires HTTPS or localhost.", "SecurityError");
         return;
       }
       try {
@@ -55,7 +87,7 @@ export function useCamera(facing: "user" | "environment", active: boolean) {
             audio: false,
           });
         } catch (e) {
-          if (cancelled) return;
+          if (!current()) return;
           const name = (e as DOMException).name;
           if (
             facing === "environment" &&
@@ -66,8 +98,6 @@ export function useCamera(facing: "user" | "environment", active: boolean) {
               "AbortError",
             ].includes(name)
           ) {
-            // The selfie stream is already released before requesting the product camera.
-            // A missing/unavailable back camera automatically falls back to the front camera.
             stream = await navigator.mediaDevices.getUserMedia({
               video: {
                 facingMode: { ideal: "user" },
@@ -85,22 +115,63 @@ export function useCamera(facing: "user" | "environment", active: boolean) {
             });
           } else throw e;
         }
-        if (cancelled) {
+        if (!current()) {
           stream.getTracks().forEach((t) => t.stop());
           return;
         }
         streamRef.current = stream;
-        const video = videoRef.current;
-        if (!video) {
-          stream.getTracks().forEach((t) => t.stop());
-          streamRef.current = null;
+        const video = videoRef.current,
+          track = stream.getVideoTracks()[0];
+        if (!video || !track || track.readyState === "ended") {
+          fail(
+            "The camera disconnected. Connect or enable it, then retry.",
+            "TrackStartError",
+          );
           return;
         }
-        video.srcObject = stream;
-        await video.play();
-        if (cancelled) return;
-        const track = stream.getVideoTracks()[0],
-          actual = track.getSettings?.().facingMode;
+        const playable = () => {
+          if (
+            !current() ||
+            track.readyState !== "live" ||
+            track.muted ||
+            video.readyState < 2 ||
+            !video.videoWidth ||
+            !video.videoHeight
+          )
+            return;
+          window.clearTimeout(deadline);
+          setReadyFacing(facing);
+          setReady(true);
+          setDenied(false);
+          setError("");
+        };
+        const ended = () =>
+          fail(
+            "The camera disconnected or permission changed. Check the camera and retry.",
+          );
+        const muted = () => {
+          if (!current()) return;
+          setReady(false);
+          setError(
+            "The camera picture was interrupted. Close other camera apps or retry.",
+          );
+        };
+        video.addEventListener("loadeddata", playable);
+        video.addEventListener("playing", playable);
+        video.addEventListener("error", ended);
+        track.addEventListener("ended", ended);
+        track.addEventListener("mute", muted);
+        track.addEventListener("unmute", playable);
+        releaseListeners.current = () => {
+          window.clearTimeout(deadline);
+          video.removeEventListener("loadeddata", playable);
+          video.removeEventListener("playing", playable);
+          video.removeEventListener("error", ended);
+          track.removeEventListener("ended", ended);
+          track.removeEventListener("mute", muted);
+          track.removeEventListener("unmute", playable);
+        };
+        const actual = track.getSettings?.().facingMode;
         setFacingMode(
           actual === "environment"
             ? "environment"
@@ -108,9 +179,6 @@ export function useCamera(facing: "user" | "environment", active: boolean) {
               ? "user"
               : selected,
         );
-        setReadyFacing(facing);
-        setReady(true);
-        setDenied(false);
         setFallbackNotice(
           usedFallback
             ? "Rear camera unavailable. Using the front camera for your product."
@@ -119,15 +187,18 @@ export function useCamera(facing: "user" | "environment", active: boolean) {
         const capabilities = track.getCapabilities?.() as
           (MediaTrackCapabilities & { torch?: boolean }) | undefined;
         setTorchSupported(Boolean(capabilities?.torch));
+        video.srcObject = stream;
+        await video.play();
+        playable();
       } catch (e) {
-        if (!cancelled) {
-          stop();
-          setDenied((e as DOMException).name === "NotAllowedError");
-          setError(
-            messages[(e as DOMException).name] ??
-              "Could not start a camera. Check permissions and retry.",
-          );
-        }
+        if (!current()) return;
+        const name = (e as DOMException).name;
+        setDenied(name === "NotAllowedError");
+        fail(
+          messages[name] ??
+            "Could not start a camera. Check permissions and retry.",
+          name,
+        );
       }
     }
     void start();
@@ -142,42 +213,46 @@ export function useCamera(facing: "user" | "environment", active: boolean) {
       stop();
     };
   }, [active, facing, retry, stop]);
-  // Camera refused: keep asking. Browsers re-show the prompt unless it was
-  // blocked for good; then we start the moment it's allowed in settings.
+  // A permission change can recover the camera. Denial itself never starts a
+  // polling loop or repeated permission prompts.
   useEffect(() => {
     if (!active || !denied) return;
-    const again = () => {
-      if (!document.hidden) setRetry((v) => v + 1);
-    };
-    const timer = window.setInterval(again, ASK_AGAIN_MS);
+    let cancelled = false;
     let status: PermissionStatus | null = null;
+    const granted = () => {
+      if (!cancelled && status?.state === "granted" && !document.hidden)
+        setRetry((v) => v + 1);
+    };
     navigator.permissions
       ?.query({ name: "camera" as PermissionName })
       .then((p) => {
+        if (cancelled) return;
         status = p;
-        p.onchange = () => {
-          if (p.state !== "denied") again();
-        };
+        p.addEventListener("change", granted);
       })
       .catch(() => {});
     return () => {
-      window.clearInterval(timer);
-      if (status) status.onchange = null;
+      cancelled = true;
+      status?.removeEventListener("change", granted);
     };
   }, [active, denied]);
   async function toggleTorch() {
+    const stream = streamRef.current;
+    const track = stream?.getVideoTracks()[0];
+    if (!track || !torchSupported) return;
     try {
-      await streamRef.current
-        ?.getVideoTracks()[0]
-        .applyConstraints({
-          advanced: [{ torch: !torch } as MediaTrackConstraintSet],
-        });
-      setTorch((v) => !v);
+      const next = !torch;
+      await track.applyConstraints({
+        advanced: [{ torch: next } as MediaTrackConstraintSet],
+      });
+      if (streamRef.current === stream) setTorch(next);
     } catch {
-      setError("Flash is unavailable on this camera. Try brighter lighting.");
+      if (streamRef.current === stream)
+        setError("Flash is unavailable on this camera. Try brighter lighting.");
     }
   }
   return {
+    failure,
     videoRef,
     error,
     ready: ready && readyFacing === facing,
@@ -185,7 +260,6 @@ export function useCamera(facing: "user" | "environment", active: boolean) {
     fallbackNotice,
     stop,
     retry: () => setRetry((v) => v + 1),
-    /** The customer refused the camera; the studio keeps asking. */
     denied,
     torch,
     torchSupported,

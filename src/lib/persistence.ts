@@ -1,6 +1,8 @@
 import { useStudio, type Photo, type Adjustment, type Layout } from "./store";
 import { fromBlob } from "./images";
+import { SPIN_TOKEN } from "./backend";
 import { DEFAULT_TEMPLATE_ID } from "../templates";
+import { committedRequest, openDatabase } from "./indexedDb";
 type StoredPhoto = {
   id: string;
   blob: Blob;
@@ -16,15 +18,24 @@ type Draft = {
   layout: Layout;
   poster: Blob | null;
   reward?: string | null;
+  phone?: string | null;
+  token?: string | null;
 };
 const DB = "sky-private-photos",
   KEY = "latest-draft";
 let startup: Promise<void> | null = null,
-  queue: Promise<void> = Promise.resolve(),
+  pendingDraft: Draft | null = null,
+  saving = false,
   status = "Saving photos on this device",
   dbPromise: Promise<IDBDatabase> | null = null;
 const listeners = new Set<() => void>();
 function message(value: string) {
+  // A new pending write does not establish recovery from a storage failure.
+  if (
+    /^Saving photos/i.test(value) &&
+    /unavailable|could not|full|disabled/i.test(status)
+  )
+    return;
   status = value;
   listeners.forEach((fn) => fn());
 }
@@ -39,21 +50,23 @@ export function subscribeStorage(fn: () => void) {
 }
 function database() {
   if (!dbPromise)
-    dbPromise = new Promise<IDBDatabase>((resolve, reject) => {
-      const req = indexedDB.open(DB, 1);
-      req.onupgradeneeded = () => req.result.createObjectStore("drafts");
-      req.onsuccess = () => resolve(req.result);
-      req.onerror = () => reject(req.error);
-    });
+    dbPromise = openDatabase(DB, "drafts")
+      .then((db) => {
+        db.onversionchange = () => {
+          db.close();
+          dbPromise = null;
+        };
+        return db;
+      })
+      .catch((error) => {
+        dbPromise = null;
+        throw error;
+      });
   return dbPromise;
 }
 async function read(): Promise<Draft | undefined> {
   const db = await database();
-  return new Promise((resolve, reject) => {
-    const req = db.transaction("drafts").objectStore("drafts").get(KEY);
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
-  });
+  return committedRequest(db, "drafts", "readonly", (s) => s.get(KEY));
 }
 function photo(p: Photo | null): StoredPhoto | null {
   return p
@@ -77,6 +90,25 @@ async function save(draft: Draft) {
       : "No saved photos on this device",
   );
 }
+async function flushDrafts() {
+  if (saving) return;
+  saving = true;
+  try {
+    while (pendingDraft) {
+      const draft = pendingDraft;
+      pendingDraft = null;
+      try {
+        await save(draft);
+      } catch {
+        message(
+          "Photos could not be saved. Storage may be full or disabled; download your poster.",
+        );
+      }
+    }
+  } finally {
+    saving = false;
+  }
+}
 async function restore(p: StoredPhoto | null): Promise<Photo | null> {
   if (!p || !(p.blob instanceof Blob)) return null;
   const decoded = await fromBlob(p.blob);
@@ -96,7 +128,13 @@ export function initializePhotoStorage(): Promise<void> {
   startup = (async () => {
     try {
       const draft = await read();
-      if (draft?.version === 1) {
+      const owner = useStudio.getState().phone;
+      if (
+        draft?.version === 1 &&
+        owner &&
+        (draft.phone === undefined || draft.phone === owner) &&
+        (draft.token === undefined || draft.token === SPIN_TOKEN)
+      ) {
         const allocated: Photo[] = [];
         try {
           const selfie = await restore(draft.selfie);
@@ -155,15 +193,14 @@ export function initializePhotoStorage(): Promise<void> {
         layout: state.layout,
         poster: state.savedPoster,
         reward: state.reward,
+        phone: state.phone,
+        token: state.token,
       };
       message("Saving photos on this device…");
-      queue = queue
-        .then(() => save(draft))
-        .catch(() => {
-          message(
-            "Photos could not be saved. Storage may be full or disabled; download your poster.",
-          );
-        });
+      // Bound retained snapshots during drags: save the newest draft after
+      // the current transaction commits, rather than keeping every update.
+      pendingDraft = draft;
+      void flushDrafts();
     });
   })();
   return startup;

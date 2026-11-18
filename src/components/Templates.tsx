@@ -1,8 +1,13 @@
 import { ChevronLeft, ChevronRight } from "lucide-react";
-import { templates } from "../templates";
+import { useEffect, useState } from "react";
+import { getTemplate, templates } from "../templates";
+import { frameAsset, retryFrame, subscribeFrames } from "../lib/frameAssets";
 import { useStudio } from "../lib/store";
 export function Templates() {
   const { template, setTemplate } = useStudio();
+  const [, redraw] = useState(0);
+  useEffect(() => subscribeFrames(() => redraw((v) => v + 1)), []);
+  const current = getTemplate(template);
   const index = Math.max(
     0,
     templates.findIndex((t) => t.id === template),
@@ -22,6 +27,11 @@ export function Templates() {
       </button>
       <div>
         <span>{templates[index].name}</span>
+        {["missing", "stale"].includes(frameAsset(current).status) && (
+          <button className="text-button" onClick={() => retryFrame(current)}>
+            Retry frame image
+          </button>
+        )}
         <div className="frame-dots">
           {templates.map((t, i) => (
             <button

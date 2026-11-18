@@ -1,35 +1,105 @@
 import { lazy, Suspense, useEffect, useState } from "react";
 import { MotionConfig } from "motion/react";
-import { PhoneGate } from "./components/PhoneGate";
-import { OfflineBanner } from "./components/StatusNotices";
-import { registerPhone } from "./lib/backend";
-import { preloadRewards } from "./lib/rewards";
+import { diagnosticUrl } from "./lib/telemetry";
+import { SpeedInsights } from "@vercel/speed-insights/react";
+import { Festive } from "./components/Festive";
+import { OfflineBanner, PhotoStorageStatus } from "./components/StatusNotices";
+import { SkyLoader } from "./components/SkyLoader";
+import { SPIN_TOKEN, fetchLink, spinPrize } from "./lib/backend";
+import { preloadRewards, setWheel } from "./lib/rewards";
+import { templates } from "./templates";
 import { useStudio } from "./lib/store";
 import { initializePhotoStorage } from "./lib/persistence";
+// Managers and customers each download only their own screens.
+const ManagerIntake = lazy(() =>
+  import("./components/ManagerIntake").then((m) => ({
+    default: m.ManagerIntake,
+  })),
+);
+// Managers and customers each download only their own screens.
+const SpinWheel = lazy(() =>
+  import("./components/SpinWheel").then((m) => ({ default: m.SpinWheel })),
+);
+// Managers and customers each download only their own screens.
+const SavedPoster = lazy(() =>
+  import("./components/SavedPoster").then((m) => ({ default: m.SavedPoster })),
+);
+// Managers and customers each download only their own screens.
+const ReviewForm = lazy(() =>
+  import("./components/ReviewForm").then((m) => ({ default: m.ReviewForm })),
+);
+// Managers and customers each download only their own screens.
+const TermsPage = lazy(() =>
+  import("./components/TermsPage").then((m) => ({ default: m.TermsPage })),
+);
+// Managers and customers each download only their own screens.
+const IphoneOffer = lazy(() =>
+  import("./components/IphoneOffer").then((m) => ({ default: m.IphoneOffer })),
+);
 const CameraStudio = lazy(() => import("./components/CameraStudio"));
 const Editor = lazy(() => import("./components/Editor"));
 export default function App() {
+  return (
+    <>
+      <Studio />
+      <SpeedInsights
+        beforeSend={(event) => {
+          const url = diagnosticUrl(event.url);
+          return url ? { ...event, url, route: new URL(url).pathname } : null;
+        }}
+      />
+    </>
+  );
+}
+function Studio() {
   const step = useStudio((s) => s.step);
+  const mirrorCount = useStudio(() => templates.length);
   const phone = useStudio((s) => s.phone);
+  const token = useStudio((s) => s.token);
+  const reward = useStudio((s) => s.reward);
+  const [linkAttempt, setLinkAttempt] = useState(0);
+  const [linkError, setLinkError] = useState("");
+  const [linkReady, setLinkReady] = useState(false);
+  const [poster, setPoster] = useState<string | null>(null);
+  const [customerName, setCustomerName] = useState("");
+  const [reviewed, setReviewed] = useState(false);
+  const [termsAccepted, setTermsAccepted] = useState(false);
+  const [offerDone, setOfferDone] = useState(false);
+  const [hydrated, setHydrated] = useState(false);
   // Gift pictures and the spin sound start loading once the customer signs
   // in, so the wheel opens with everything already on the phone.
   useEffect(() => {
     if (phone) preloadRewards();
   }, [phone]);
-  const [hydrated, setHydrated] = useState(false);
-  // On start, re-check a number remembered from an earlier visit against the
-  // database, so a prize already won (on any device) is restored rather than
-  // re-spun. Fresh sign-ins are checked by PhoneGate itself.
+  // A WhatsApp link decides who this is; the server remembers their prize, so
+  // reopening the link (on any device) continues rather than re-spins.
   useEffect(() => {
-    const remembered = useStudio.getState().phone;
-    if (!remembered) return;
-    registerPhone(remembered)
+    if (!SPIN_TOKEN || !hydrated) return;
+    let live = true;
+    setLinkError("");
+    fetchLink(SPIN_TOKEN)
       .then((c) => {
-        if (c.reward && !useStudio.getState().reward)
-          useStudio.getState().setReward(c.reward);
+        if (!live) return;
+        const s = useStudio.getState();
+        // A different link on this phone: nothing of the last customer stays.
+        if (s.token && s.token !== SPIN_TOKEN) s.reset();
+        setWheel(c.items);
+        s.setReward(c.reward);
+        s.setToken(SPIN_TOKEN);
+        s.setPhone(c.phone);
+        setPoster(c.poster);
+        setCustomerName(c.name);
+        s.setInstagramId(c.instagramId);
+        setReviewed(c.reviewed);
+        setTermsAccepted(c.termsAccepted);
+        setOfferDone(c.videoReview || c.reviewed);
+        setLinkReady(true);
       })
-      .catch(() => {});
-  }, []);
+      .catch((e: Error) => live && setLinkError(e.message));
+    return () => {
+      live = false;
+    };
+  }, [hydrated, linkAttempt]);
 
   useEffect(() => {
     let active = true;
@@ -42,19 +112,151 @@ export default function App() {
   }, []);
   if (!hydrated)
     return <div className="loading">Opening your saved studio…</div>;
-  if (!phone)
+  // Only the link itself opens a customer; the main page is always the form.
+  const signedIn = phone && token && token === SPIN_TOKEN && linkReady;
+  if (!signedIn)
     return (
       <MotionConfig reducedMotion="user">
         <main id="main" className="mobile-studio">
           <OfflineBanner />
-          <PhoneGate />
+          <PhotoStorageStatus />
+          <SkyLoader />
+          {SPIN_TOKEN ? (
+            <Festive banner>
+              <Suspense fallback={<div className="loading">Loading…</div>}>
+                <div className="phone-card manager-note" role="status">
+                  {linkError || "Opening your Karthigai Deepam gift…"}
+                  {linkError && (
+                    <button
+                      className="spin-button"
+                      onClick={() => setLinkAttempt((n) => n + 1)}
+                    >
+                      Retry gift link
+                    </button>
+                  )}
+                </div>
+              </Suspense>
+            </Festive>
+          ) : (
+            <Suspense fallback={<div className="loading">Loading…</div>}>
+              <ManagerIntake />
+            </Suspense>
+          )}
         </main>
       </MotionConfig>
+    );
+  // Finished before: back to their poster, ready to share again.
+  if (poster)
+    return (
+      <MotionConfig reducedMotion="user">
+        <main id="main" className="mobile-studio">
+          <OfflineBanner />
+          <PhotoStorageStatus />
+          <SkyLoader />
+          <Festive banner>
+            <Suspense fallback={<div className="loading">Loading…</div>}>
+              <SavedPoster url={poster} />
+            </Suspense>
+          </Festive>
+        </main>
+      </MotionConfig>
+    );
+  // The link opens on the terms; nothing else until they are accepted.
+  if (!termsAccepted)
+    return (
+      <MotionConfig reducedMotion="user">
+        <main id="main" className="mobile-studio">
+          <OfflineBanner />
+          <PhotoStorageStatus />
+          <SkyLoader />
+          <Festive banner>
+            <Suspense fallback={<div className="loading">Loading…</div>}>
+              <TermsPage
+                token={token}
+                onDone={(pledged) => {
+                  // Already in the iPhone contest: no need to ask again.
+                  if (pledged) setOfferDone(true);
+                  setTermsAccepted(true);
+                }}
+              />
+            </Suspense>
+          </Festive>
+        </main>
+      </MotionConfig>
+    );
+  // Spin first: the prize then goes on the mirror poster.
+  if (!reward)
+    return (
+      <MotionConfig reducedMotion="user">
+        <main id="main" className="mobile-studio">
+          <OfflineBanner />
+          <PhotoStorageStatus />
+          <SkyLoader />
+          <Festive banner>
+            <Suspense fallback={<div className="loading">Loading…</div>}>
+              <SpinWheel
+                getPrize={({ onQueue, signal }) =>
+                  spinPrize(token, onQueue, signal)
+                }
+                customerName={customerName}
+                onClaim={(r) => useStudio.getState().setReward(r.id)}
+              />
+            </Suspense>
+          </Festive>
+        </main>
+      </MotionConfig>
+    );
+  // Straight after the spin: one more invitation to the iPhone 15 contest.
+  if (!offerDone)
+    return (
+      <MotionConfig reducedMotion="user">
+        <main id="main" className="mobile-studio">
+          <OfflineBanner />
+          <PhotoStorageStatus />
+          <SkyLoader />
+          <Festive banner>
+            <Suspense fallback={<div className="loading">Loading…</div>}>
+              <IphoneOffer token={token} onDone={() => setOfferDone(true)} />
+            </Suspense>
+          </Festive>
+        </main>
+      </MotionConfig>
+    );
+  // After the spin: stars and a review, then the mirror selfie.
+  if (!reviewed)
+    return (
+      <MotionConfig reducedMotion="user">
+        <main id="main" className="mobile-studio">
+          <OfflineBanner />
+          <PhotoStorageStatus />
+          <SkyLoader />
+          <Festive banner>
+            <Suspense fallback={<div className="loading">Loading…</div>}>
+              <ReviewForm token={token} onDone={() => setReviewed(true)} />
+            </Suspense>
+          </Festive>
+        </main>
+      </MotionConfig>
+    );
+  if (mirrorCount === 0)
+    return (
+      <main id="main" className="mobile-studio">
+        <Festive>
+          <div className="phone-shake">
+            <section className="phone-card" role="status">
+              <h1 className="phone-title">Mirror studio unavailable</h1>
+              <p>Please ask SKY staff when a mirror frame will be available.</p>
+            </section>
+          </div>
+        </Festive>
+      </main>
     );
   return (
     <MotionConfig reducedMotion="user">
       <main id="main" className="mobile-studio">
         <OfflineBanner />
+        <PhotoStorageStatus />
+        <SkyLoader />
         <Suspense fallback={<div className="loading">Opening camera…</div>}>
           {["selfie", "selfieReview", "product"].includes(step) ? (
             <CameraStudio key={step === "product" ? "product" : "selfie"} />

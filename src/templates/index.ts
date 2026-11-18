@@ -17,62 +17,27 @@ export type Template = {
   fit: "cover";
   artwork: string;
 };
-// Coordinates use the shared 1080 × 1920 export design space.
-export const DEFAULT_TEMPLATE_ID = "dream";
+// Keep the original coordinates for mirrors already saved in the database.
+export const MIRROR_DESIGN_HEIGHT = 1920;
+export const DEFAULT_TEMPLATE_ID = "karthigai-deepam";
 export const templates: Template[] = [
   {
-    id: "dream",
-    name: "Dream Diwali",
-    subtitle: "Your SKY Dream Diwali frame",
+    id: DEFAULT_TEMPLATE_ID,
+    name: "Karthigai Deepam",
+    subtitle: "இனிய கார்த்திகை தீபத் திருநாள் நல்வாழ்த்துகள்!",
     bg: "#f7e7cc",
     ink: "#3c2418",
     gold: "#d6a447",
-    accent: "#d22856",
+    accent: "#a02b24",
     light: true,
-    arch: true,
-    selfie: { x: 184, y: 165, w: 712, h: 950 },
-    product: { x: 337, y: 1215, w: 405, h: 245 },
+    arch: false,
+    selfie: { x: 174, y: 385, w: 732, h: 556 },
+    product: { x: 264, y: 1050, w: 552, h: 225 },
     logo: { x: 0, y: 0, w: 0, h: 0 },
     heading: { x: 0, y: 0 },
     animation: "quiet",
     fit: "cover",
-    artwork: "frames/0.jpeg",
-  },
-  {
-    id: "golden",
-    name: "Golden Mirror",
-    subtitle: "Your supplied gold mirror frame",
-    bg: "#17120d",
-    ink: "#fff9f0",
-    gold: "#d6a447",
-    accent: "#d6a447",
-    light: false,
-    arch: true,
-    selfie: { x: 126, y: 115, w: 828, h: 1215 },
-    product: { x: 361, y: 1344, w: 620, h: 342 },
-    logo: { x: 0, y: 0, w: 0, h: 0 },
-    heading: { x: 0, y: 0 },
-    animation: "quiet",
-    fit: "cover",
-    artwork: "frames/2.jpeg",
-  },
-  {
-    id: "celebration",
-    name: "Festive Celebration",
-    subtitle: "Your supplied fireworks frame",
-    bg: "#101426",
-    ink: "#fff9f0",
-    gold: "#e8bd62",
-    accent: "#ed1224",
-    light: false,
-    arch: true,
-    selfie: { x: 207, y: 160, w: 666, h: 1040 },
-    product: { x: 344, y: 1253, w: 396, h: 259 },
-    logo: { x: 0, y: 0, w: 0, h: 0 },
-    heading: { x: 0, y: 0 },
-    animation: "quiet",
-    fit: "cover",
-    artwork: "frames/1.jpeg",
+    artwork: "frames/karthigai-deepam.webp",
   },
 ];
 // Built-in themes are the offline fallback; the backend replaces them live.
@@ -85,9 +50,47 @@ export function subscribeTemplates(fn: () => void) {
 }
 // Mutates in place so every module holding `templates` sees the new list.
 export function replaceTemplates(next: Template[]) {
-  if (!next.length) return;
+  if (!Array.isArray(next) || !next.every(isTemplate))
+    throw new Error(
+      "The frame catalog is invalid. Keeping the current frames.",
+    );
   templates.splice(0, templates.length, ...next);
   listeners.forEach((fn) => fn());
+}
+function isTemplate(value: unknown): value is Template {
+  if (!value || typeof value !== "object") return false;
+  const t = value as Record<string, unknown>;
+  if (
+    !["id", "name", "subtitle", "artwork", "bg", "ink", "gold", "accent"].every(
+      (k) => typeof t[k] === "string",
+    )
+  )
+    return false;
+  if (
+    !t.id ||
+    !t.artwork ||
+    typeof t.arch !== "boolean" ||
+    typeof t.light !== "boolean"
+  )
+    return false;
+  for (const key of ["selfie", "product"]) {
+    const r = t[key] as Rect | undefined;
+    if (
+      !r ||
+      ![r.x, r.y, r.w, r.h].every(Number.isFinite) ||
+      r.x < 0 ||
+      r.y < 0 ||
+      r.w < 20 ||
+      r.h < 20 ||
+      r.x + r.w > 1080 ||
+      r.y + r.h > MIRROR_DESIGN_HEIGHT
+    )
+      return false;
+  }
+  const artwork = t.artwork as string;
+  return (
+    !/^\s*(?:javascript|data|blob):/i.test(artwork) && !artwork.startsWith("//")
+  );
 }
 export const getTemplate = (id: string) =>
   templates.find((t) => t.id === id) ?? templates[0];

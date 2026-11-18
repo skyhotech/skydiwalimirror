@@ -4,6 +4,9 @@ import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 export default defineConfig({
   base: "./",
+  // Integration and browser suites may use different API origins. Sharing
+  // their optimizer directory lets one server invalidate another's modules.
+  cacheDir: process.env.VITE_CACHE_DIR || "node_modules/.vite",
   // Unit tests only; tests/ holds the Playwright browser tests.
   test: { exclude: ["**/node_modules/**", "**/dist/**", "tests/**"] },
   plugins: [react(), tailwindcss()],
@@ -17,6 +20,12 @@ export default defineConfig({
         "**/test-results/**",
         "**/playwright-report/**",
         "**/graphify-out/**",
+        "**/docs/**",
+        "**/deploy/**",
+        "**/tests/**",
+        "**/scripts/**",
+        "**/*.test.ts",
+        "**/*.md",
       ],
     },
     proxy: {

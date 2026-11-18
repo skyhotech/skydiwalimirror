@@ -2,45 +2,60 @@ from pathlib import Path
 
 from django.conf import settings
 from django.core.files import File
-from django.core.management.base import BaseCommand
+from django.core.management.base import BaseCommand, CommandError
+from django.db import transaction
+from django.db.models import Max, Q
+from django.utils import timezone
 
 from mirrors.models import Mirror
 
-FRAMES = Path(settings.BASE_DIR).parent / "public" / "frames"
-
-# Mirrors the built-in themes in src/templates/index.ts.
-SEED = [
-    dict(slug="dream", name="Dream Diwali", subtitle="Your SKY Dream Diwali frame",
-         bg="#f7e7cc", ink="#3c2418", gold="#d6a447", accent="#d22856", light=True,
-         selfie={"x": 184, "y": 165, "w": 712, "h": 950},
-         product={"x": 337, "y": 1215, "w": 405, "h": 245}, file="0.jpeg"),
-    dict(slug="golden", name="Golden Mirror", subtitle="Your supplied gold mirror frame",
-         bg="#17120d", ink="#fff9f0", gold="#d6a447", accent="#d6a447", light=False,
-         selfie={"x": 126, "y": 115, "w": 828, "h": 1215},
-         product={"x": 361, "y": 1344, "w": 620, "h": 342}, file="2.jpeg"),
-    dict(slug="celebration", name="Festive Celebration", subtitle="Your supplied fireworks frame",
-         bg="#101426", ink="#fff9f0", gold="#e8bd62", accent="#ed1224", light=False,
-         selfie={"x": 207, "y": 160, "w": 666, "h": 1040},
-         product={"x": 344, "y": 1253, "w": 396, "h": 259}, file="1.jpeg"),
-]
+ARTWORK = Path(settings.BASE_DIR).parent / "public" / "frames" / "karthigai-deepam.webp"
+SLUG = "karthigai-deepam"
+LEGACY_FRAMES = {
+    "dream": "Dream Diwali",
+    "golden": "Golden Mirror",
+    "celebration": "Festive Celebration",
+}
 
 
 class Command(BaseCommand):
-    help = "Import the studio's built-in mirror themes from public/frames."
+    help = "Import the built-in Karthigai Deepam mirror."
 
+    def add_arguments(self, parser):
+        parser.add_argument(
+            "--hide-legacy",
+            action="store_true",
+            help="Hide the three original built-in mirrors after installing the Deepam mirror.",
+        )
+
+    @transaction.atomic
     def handle(self, *args, **options):
-        for order, spec in enumerate(SEED, start=1):
-            spec = dict(spec)
-            filename = spec.pop("file")
-            if Mirror.objects.filter(slug=spec["slug"]).exists():
-                self.stdout.write(f"skip {spec['slug']} (exists)")
-                continue
-            path = FRAMES / filename
-            if not path.exists():
-                self.stderr.write(f"missing {path}")
-                continue
-            mirror = Mirror(order=order, **spec)
-            with path.open("rb") as fh:
-                mirror.artwork.save(filename, File(fh), save=False)
+        mirror = Mirror.objects.filter(slug=SLUG).first()
+        if mirror is None:
+            if not ARTWORK.is_file():
+                raise CommandError(f"Missing artwork: {ARTWORK}")
+            order = (Mirror.objects.aggregate(last=Max("order"))["last"] or 0) + 1
+            mirror = Mirror(
+                slug=SLUG, name="Karthigai Deepam", order=order,
+                subtitle="இனிய கார்த்திகை தீபத் திருநாள் நல்வாழ்த்துகள்!",
+                accent="#a02b24", arch=False,
+                selfie={"x": 174, "y": 385, "w": 732, "h": 556},
+                product={"x": 264, "y": 1050, "w": 552, "h": 225},
+            )
+            with ARTWORK.open("rb") as artwork:
+                mirror.artwork.save(ARTWORK.name, File(artwork), save=False)
             mirror.save()
             self.stdout.write(self.style.SUCCESS(f"created {mirror.slug}"))
+        else:
+            self.stdout.write(f"skip {SLUG} (exists)")
+
+        if options["hide_legacy"]:
+            if not mirror.is_active:
+                raise CommandError("Show the Deepam mirror in the admin before hiding the original frames.")
+            legacy = Q()
+            for slug, name in LEGACY_FRAMES.items():
+                legacy |= Q(slug=slug, name=name)
+            hidden = Mirror.objects.filter(legacy, is_active=True).update(
+                is_active=False, updated_at=timezone.now(),
+            )
+            self.stdout.write(f"hid {hidden} original mirrors")

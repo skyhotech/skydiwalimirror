@@ -1,3 +1,4 @@
+import { storageStatus, subscribeStorage } from "../lib/persistence";
 import { useEffect, useState, useSyncExternalStore } from "react";
 import {
   CloudOff,
@@ -65,4 +66,10 @@ export function UploadStatus() {
       <Icon size={15} aria-hidden="true" /> {UPLOAD_TEXT[state]}
     </p>
   );
+}
+
+export function PhotoStorageStatus() {
+  const status = useSyncExternalStore(subscribeStorage, storageStatus);
+  if (!/unavailable|could not|full|disabled/i.test(status)) return null;
+  return <p className="storage-warning" role="alert">{status}</p>;
 }

@@ -17,11 +17,7 @@ import {
 import { motion } from "motion/react";
 import { useStudio, type Photo } from "../lib/store";
 import { getTemplate, templates } from "../templates";
-import {
-  instagramReady,
-  renderInstagramPost,
-  POST_HEIGHT,
-} from "../lib/instagram";
+import { renderPoster, WIDTH, HEIGHT } from "../lib/renderer";
 import { canvasBlob, download } from "../lib/images";
 import { Poster } from "./Poster";
 import { SpinWheel } from "./SpinWheel";
@@ -46,7 +42,6 @@ export default function Editor() {
     [error, setError] = useState(""),
     [blob, setBlob] = useState<Blob | null>(s.savedPoster),
     [format, setFormat] = useState(s.savedPoster?.type || "image/png"),
-    [scale, setScale] = useState(1),
     [notice, setNotice] = useState("");
   const [prepared, setPrepared] = useState<Blob | null>(null),
     [assetVersion, setAssetVersion] = useState(0),
@@ -70,14 +65,12 @@ export default function Editor() {
       void (async () => {
         try {
           const c = document.createElement("canvas");
-          await instagramReady();
-          c.width = 1080 * scale;
-          c.height = POST_HEIGHT * scale;
+          c.width = WIDTH;
+          c.height = HEIGHT;
           const ctx = c.getContext("2d");
           if (!ctx)
             throw new Error("Not enough memory to prepare your poster.");
-          ctx.scale(scale, scale);
-          renderInstagramPost(ctx, {
+          renderPoster(ctx, {
             template: getTemplate(s.template),
             selfie: s.selfie,
             products: s.products,
@@ -105,7 +98,6 @@ export default function Editor() {
     s.reward,
     s.layout,
     s.logo,
-    scale,
     format,
     assetVersion,
   ]);
@@ -141,13 +133,11 @@ export default function Editor() {
         );
       await new Promise((r) => setTimeout(r, 40));
       const c = document.createElement("canvas");
-      await instagramReady();
-      c.width = 1080 * scale;
-      c.height = POST_HEIGHT * scale;
+      c.width = WIDTH;
+      c.height = HEIGHT;
       const ctx = c.getContext("2d");
       if (!ctx) throw new Error("Not enough memory. Try standard resolution.");
-      ctx.scale(scale, scale);
-      renderInstagramPost(ctx, state);
+      renderPoster(ctx, state);
       const generated = await canvasBlob(c, format);
       setBlob(generated);
       s.setSavedPoster(generated);
@@ -160,7 +150,7 @@ export default function Editor() {
       setBusy(false);
     }
   }
-  const filename = `SKY-Diwali-${getTemplate(s.template).id}.${format === "image/png" ? "png" : "jpg"}`;
+  const filename = `SKY-Karthigai-Deepam-${getTemplate(s.template).id}.${format === "image/png" ? "png" : "jpg"}`;
   async function share(instagram = false) {
     const poster = result ? blob : prepared;
     if (!poster || !s.selfie || !s.products.length) {
@@ -190,7 +180,7 @@ export default function Editor() {
         );
         await navigator.share({
           files: [file],
-          title: "My SKY Diwali moment",
+          title: "My SKY Karthigai Deepam moment",
           text: caption,
         });
       } else {
@@ -268,7 +258,7 @@ export default function Editor() {
       {wheelOpen && (
         <SpinWheel
           getPrize={({ onQueue }) =>
-            spinPrize(s.phone ?? "", s.selfie?.blob, onQueue)
+            spinPrize(s.token ?? "", onQueue)
           }
           onClaim={(r) => {
             s.setReward(r.id);
@@ -283,7 +273,7 @@ export default function Editor() {
           </span>
           <h1>
             {result
-              ? "Your Diwali, beautifully framed."
+              ? "Your Karthigai Deepam, beautifully framed."
               : "The finishing touches."}
           </h1>
           <p>
@@ -355,7 +345,7 @@ export default function Editor() {
             drag.current = null;
           }}
         >
-          <Poster chrome state={state} />
+          <Poster state={state} />
           <button
             className="instagram-post-button poster-post-action"
             aria-label="Post on Instagram"
@@ -381,9 +371,7 @@ export default function Editor() {
         <div className="under-preview">
           <span>
             <Check size={14} />{" "}
-            {scale === 2
-              ? `2160 × ${POST_HEIGHT * 2}`
-              : `1080 × ${POST_HEIGHT}`}{" "}
+            {`${WIDTH} × ${HEIGHT}`}{" "}
             px
           </span>
           <span>Processed on your device</span>
@@ -555,16 +543,6 @@ export default function Editor() {
                     >
                       <option value="image/png">PNG · highest quality</option>
                       <option value="image/jpeg">JPEG · smaller file</option>
-                    </select>
-                  </label>
-                  <label>
-                    Resolution
-                    <select
-                      value={scale}
-                      onChange={(e) => setScale(+e.target.value)}
-                    >
-                      <option value={1}>1080 × {POST_HEIGHT}</option>
-                      <option value={2}>2160 × {POST_HEIGHT * 2} · 2×</option>
                     </select>
                   </label>
                 </div>

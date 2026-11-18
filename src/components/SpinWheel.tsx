@@ -1,8 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Gift, Sparkles } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
-import { REWARDS, preloadRewards, sounds, type Reward } from "../lib/rewards";
-const SLICE = 360 / REWARDS.length;
+import {
+  preloadRewards,
+  sounds,
+  wheelItems,
+  type Reward,
+} from "../lib/rewards";
+// Few gifts repeat around the wheel, which still needs to look like one.
+const MIN_SLICES = 6;
+const NARROW = 10;
 // Length of process spin.mp3; replaced by the real duration once it loads.
 const FALLBACK_SPIN_MS = 2424;
 // Full turns per spin.
@@ -11,19 +18,44 @@ const BULBS = 16;
 const CONFETTI = 36;
 const COLORS = ["#d22856", "#d6a447", "#7a1631", "#f3cf7a"];
 const CONFETTI_COLORS = ["#d22856", "#d6a447", "#f3cf7a", "#fff4dc", "#2b9f6b"];
+// The SKY emblem at the hub, in proportion to the supplied artwork: holes of
+// 80/325 of the disc, 173/325 from its centre, at the top and 120° apart.
+const HUB = 30;
+const HOLE_R = 80 / 325;
+const EMBLEM_HOLES = [-90, 30, 150].map((deg) => {
+  const a = (deg * Math.PI) / 180;
+  return [(173 / 325) * Math.cos(a), (173 / 325) * Math.sin(a)];
+});
 const SIZE = 320,
   R = SIZE / 2;
 function point(angle: number, radius: number) {
   const a = ((angle - 90) * Math.PI) / 180;
   return [R + radius * Math.cos(a), R + radius * Math.sin(a)];
 }
-function slicePath(i: number) {
-  const [x1, y1] = point(i * SLICE, R - 14);
-  const [x2, y2] = point((i + 1) * SLICE, R - 14);
+function slicePath(i: number, slice: number) {
+  const [x1, y1] = point(i * slice, R - 14);
+  const [x2, y2] = point((i + 1) * slice, R - 14);
   return `M${R},${R} L${x1},${y1} A${R - 14},${R - 14} 0 0 1 ${x2},${y2} Z`;
 }
 // Time to enjoy the win (sound, confetti) before the prize is added automatically.
-const AUTO_CLAIM_MS = 2200;
+// Longest the prize screen waits for the win sound and the spoken message.
+const MAX_ANNOUNCE_MS = 12_000;
+/** Reads text aloud in an Indian English voice when the phone has one. */
+function speak(text: string, done: () => void) {
+  const synth = typeof speechSynthesis === "undefined" ? null : speechSynthesis;
+  if (!synth) return done();
+  const say = new SpeechSynthesisUtterance(text);
+  const voices = synth.getVoices();
+  say.voice =
+    voices.find((v) => v.lang === "en-IN") ??
+    voices.find((v) => v.lang.startsWith("en")) ??
+    null;
+  say.lang = say.voice?.lang ?? "en-IN";
+  say.rate = 0.95;
+  say.onend = say.onerror = () => done();
+  synth.cancel();
+  synth.speak(say);
+}
 // Longest the wheel turns while waiting for the prize (the queue can extend it).
 const MAX_WAIT_MS = 25_000;
 // Starts at roughly the waiting speed, then a long smooth slow-down.
@@ -31,14 +63,32 @@ const LANDING_EASE = "cubic-bezier(0.33, 0.6, 0.3, 1)";
 export function SpinWheel({
   onClaim,
   getPrize,
+  customerName = "",
 }: {
+  /** Read out in the congratulations after the win. */
+  customerName?: string;
   onClaim: (reward: Reward) => void;
   /** Resolves the prize id; the server decides it, once per customer.
    *  onQueue(true) while the customer waits in line because SKY is busy. */
   getPrize: (progress: {
     onQueue: (waiting: boolean) => void;
+    signal: AbortSignal;
   }) => Promise<string>;
 }) {
+  const [slices] = useState(() => {
+    const items = wheelItems();
+    const repeats = Math.ceil(MIN_SLICES / items.length);
+    return Array.from({ length: repeats }, () => items).flat();
+  });
+  const SLICE = 360 / slices.length;
+  // More gifts make thinner slices: the picture fits its slice, the text
+  // shrinks, and past NARROW slices labels run along the slice instead.
+  const picture = Math.min(
+    28,
+    Math.max(9, R * 0.58 * Math.sin(Math.PI / slices.length) - 3),
+  );
+  const labelSize = Math.max(7, 12 - Math.max(0, slices.length - 8) * 0.5);
+  const radial = slices.length > NARROW;
   const [rotation, setRotation] = useState(0);
   const [spinMs, setSpinMs] = useState(FALLBACK_SPIN_MS);
   const [ease, setEase] = useState(LANDING_EASE);
@@ -57,7 +107,11 @@ export function SpinWheel({
   const claimTimer = useRef(0);
   // Set synchronously, so a second tap or effect can never start another spin.
   const spinLock = useRef(false);
+  const mounted = useRef(true);
+  const attempt = useRef<AbortController | null>(null);
+  const watchdogRef = useRef(0);
   useEffect(() => {
+    mounted.current = true;
     preloadRewards();
     const spin = new Audio(sounds.spin);
     spin.preload = "auto";
@@ -73,6 +127,10 @@ export function SpinWheel({
     addEventListener("beforeunload", block);
     document.documentElement.classList.add("no-pull-refresh");
     return () => {
+      mounted.current = false;
+      attempt.current?.abort();
+      window.clearInterval(watchdogRef.current);
+      win.pause();
       spin.pause();
       window.clearTimeout(timer.current);
       window.clearTimeout(claimTimer.current);
@@ -105,6 +163,9 @@ export function SpinWheel({
     setError("");
     setPhase("spinning");
     const audio = spinAudio.current;
+    // Unlock speech inside the tap too; iPhones refuse it otherwise.
+    if (typeof speechSynthesis !== "undefined")
+      speechSynthesis.speak(new SpeechSynthesisUtterance(""));
     // Start the sound inside the tap; phones block audio started later.
     if (audio) {
       audio.currentTime = 0;
@@ -128,8 +189,13 @@ export function SpinWheel({
       // Never spin for ever: give up after a while and offer Try again.
       let watchdog = 0;
       const since = performance.now();
+      const controller = new AbortController();
+      attempt.current?.abort();
+      attempt.current = controller;
       const prize = await Promise.race([
-        getPrize({ onQueue }).finally(() => window.clearInterval(watchdog)),
+        getPrize({ onQueue, signal: controller.signal }).finally(() =>
+          window.clearInterval(watchdog),
+        ),
         new Promise<never>((_, reject) => {
           // Waiting in the queue is fine; silence for too long is not.
           watchdog = window.setInterval(() => {
@@ -138,11 +204,17 @@ export function SpinWheel({
               reject(new Error("SKY is taking too long. Tap Try again."));
             }
           }, 500);
+          watchdogRef.current = watchdog;
         }),
       ]);
-      index = REWARDS.findIndex((r) => r.id === prize);
-      if (index < 0) throw new Error("Unknown prize. Try again.");
+      if (!mounted.current) return;
+      const matching = slices.flatMap((r, i) => (r.id === prize ? [i] : []));
+      if (!matching.length) throw new Error("Unknown prize. Try again.");
+      index = matching[Math.floor(Math.random() * matching.length)];
     } catch (e) {
+      if (!mounted.current) return;
+      attempt.current?.abort();
+      window.clearInterval(watchdogRef.current);
       audio?.pause();
       setError((e as Error).message);
       setPhase("ready");
@@ -166,13 +238,28 @@ export function SpinWheel({
       }
       // A long celebratory buzz (Android; iPhones don't allow vibration).
       navigator.vibrate?.([220, 90, 220, 90, 900]);
-      const reward = REWARDS[index];
+      const reward = slices[index];
       setWon(reward);
       setPhase("won");
-      claimTimer.current = window.setTimeout(
-        () => onClaim(reward),
-        AUTO_CLAIM_MS,
-      );
+      // After the win sound, the prize is read out; the next screen waits for it.
+      let claimed = false;
+      const claim = () => {
+        if (claimed) return;
+        claimed = true;
+        onClaim(reward);
+      };
+      const announce = () =>
+        speak(
+          `Congratulations${customerName ? " " + customerName : ""}! You won ${
+            /^[aeiou]/i.test(reward.label) ? "an" : "a"
+          } ${reward.label} on the wheel. Enjoy!`,
+          () => (claimTimer.current = window.setTimeout(claim, 600)),
+        );
+      const win = winAudio.current;
+      if (win && !win.paused)
+        win.addEventListener("ended", announce, { once: true });
+      else announce();
+      claimTimer.current = window.setTimeout(claim, MAX_ANNOUNCE_MS);
     };
     // The transition restarts from the wheel's current angle: no jump.
     setSpinMs(remaining);
@@ -244,11 +331,11 @@ export function SpinWheel({
                 aria-hidden="true"
               >
                 <defs>
-                  {REWARDS.map((r, i) => {
+                  {slices.map((_, i) => {
                     const [cx, cy] = point(i * SLICE + SLICE / 2, R * 0.58);
                     return (
-                      <clipPath key={r.id} id={`spin-clip-${r.id}`}>
-                        <circle cx={cx} cy={cy} r={28} />
+                      <clipPath key={i} id={`spin-clip-${i}`}>
+                        <circle cx={cx} cy={cy} r={picture} />
                       </clipPath>
                     );
                   })}
@@ -258,14 +345,14 @@ export function SpinWheel({
                   </radialGradient>
                 </defs>
                 <circle cx={R} cy={R} r={R - 1} fill="#5a1426" />
-                {REWARDS.map((r, i) => {
+                {slices.map((r, i) => {
                   const mid = i * SLICE + SLICE / 2;
                   const [cx, cy] = point(mid, R * 0.58);
                   const [tx, ty] = point(mid, R * 0.83);
                   const light = i % 2 === 1;
                   return (
                     <g
-                      key={r.id}
+                      key={i}
                       className={
                         phase === "won" && won?.id === r.id
                           ? "spin-slice-won"
@@ -273,29 +360,29 @@ export function SpinWheel({
                       }
                     >
                       <path
-                        d={slicePath(i)}
+                        d={slicePath(i, SLICE)}
                         fill={COLORS[i % COLORS.length]}
                         stroke="#fff4dc"
                         strokeWidth={2}
                       />
-                      <circle cx={cx} cy={cy} r={30} fill="#fff4dc" />
+                      <circle cx={cx} cy={cy} r={picture + 2} fill="#fff4dc" />
                       <image
                         href={r.image}
-                        x={cx - 28}
-                        y={cy - 28}
-                        width={56}
-                        height={56}
-                        clipPath={`url(#spin-clip-${r.id})`}
+                        x={cx - picture}
+                        y={cy - picture}
+                        width={picture * 2}
+                        height={picture * 2}
+                        clipPath={`url(#spin-clip-${i})`}
                         preserveAspectRatio="xMidYMid slice"
                       />
                       <text
                         x={tx}
                         y={ty}
-                        transform={`rotate(${mid} ${tx} ${ty})`}
+                        transform={`rotate(${radial ? mid - 90 : mid} ${tx} ${ty})`}
                         textAnchor="middle"
                         dominantBaseline="middle"
                         fill={light ? "#3c2418" : "#fff4dc"}
-                        fontSize={12}
+                        fontSize={labelSize}
                         fontWeight={700}
                       >
                         {r.label}
@@ -315,14 +402,18 @@ export function SpinWheel({
                     />
                   );
                 })}
-                <circle
-                  cx={R}
-                  cy={R}
-                  r={24}
-                  fill="url(#spin-hub)"
-                  stroke="#fff4dc"
-                  strokeWidth={4}
-                />
+                {/* SKY emblem: red disc with three circles, 120° apart. */}
+                <circle cx={R} cy={R} r={HUB + 3} fill="#fff4dc" />
+                <circle cx={R} cy={R} r={HUB} fill="#ff0209" />
+                {EMBLEM_HOLES.map(([dx, dy]) => (
+                  <circle
+                    key={dx + "," + dy}
+                    cx={R + dx * HUB}
+                    cy={R + dy * HUB}
+                    r={HUB * HOLE_R}
+                    fill="#fff"
+                  />
+                ))}
               </svg>
             </div>
           </div>

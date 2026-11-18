@@ -1,4 +1,5 @@
 from django.core.management.base import BaseCommand
+from django.db import transaction
 
 from mirrors.images import (
     FRAME_SIZE,
@@ -32,7 +33,7 @@ class Command(BaseCommand):
             return 0
         old_name, saved = current.name, current.size - small.size
         getattr(obj, field).save(small.name, small, save=False)
-        current.storage.delete(old_name)
+        transaction.on_commit(lambda storage=current.storage, name=old_name: storage.delete(name))
         return saved
 
     def _thumb(self, obj, source, thumb):
@@ -43,35 +44,36 @@ class Command(BaseCommand):
             return
         if not src or not src.storage.exists(src.name):
             return
-        if existing:
-            existing.storage.delete(existing.name)
         with src.open("rb") as fh:
             small = optimized(fh, THUMB_SIZE, 78, name=src.name)
         if small:
+            if existing:
+                transaction.on_commit(lambda storage=existing.storage, name=existing.name: storage.delete(name))
             getattr(obj, thumb).save(small.name, small, save=False)
 
     def handle(self, *args, **options):
         saved = 0
         for mirror in Mirror.objects.all():
-            n = self._replace(mirror, "artwork", FRAME_SIZE, 88)
-            if n:
-                # update() keeps Mirror.save's own optimisation from running twice
-                # and bumps updated_at so studios reload the smaller image.
-                from django.utils import timezone
-                Mirror.objects.filter(pk=mirror.pk).update(
-                    artwork=mirror.artwork.name, updated_at=timezone.now()
-                )
-                saved += n
+            with transaction.atomic():
+                n = self._replace(mirror, "artwork", FRAME_SIZE, 88)
+                if n:
+                    # update() avoids running the image optimisation twice.
+                    from django.utils import timezone
+                    Mirror.objects.filter(pk=mirror.pk).update(
+                        artwork=mirror.artwork.name, updated_at=timezone.now()
+                    )
+                    saved += n
         customers = 0
         for c in Customer.objects.all().iterator():
-            saved += self._replace(c, "poster", POSTER_SIZE)
-            saved += self._replace(c, "selfie", SELFIE_SIZE)
-            self._thumb(c, "poster", "poster_thumb")
-            self._thumb(c, "selfie", "selfie_thumb")
-            Customer.objects.filter(pk=c.pk).update(
-                poster=c.poster.name, selfie=c.selfie.name,
-                poster_thumb=c.poster_thumb.name, selfie_thumb=c.selfie_thumb.name,
-            )
+            with transaction.atomic():
+                saved += self._replace(c, "poster", POSTER_SIZE)
+                saved += self._replace(c, "selfie", SELFIE_SIZE)
+                self._thumb(c, "poster", "poster_thumb")
+                self._thumb(c, "selfie", "selfie_thumb")
+                Customer.objects.filter(pk=c.pk).update(
+                    poster=c.poster.name, selfie=c.selfie.name,
+                    poster_thumb=c.poster_thumb.name, selfie_thumb=c.selfie_thumb.name,
+                )
             customers += 1
         self.stdout.write(self.style.SUCCESS(
             f"Optimised {customers} customers and all mirrors; saved {saved / 1024 / 1024:.1f} MB."

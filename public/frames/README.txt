@@ -1,5 +1,5 @@
-The original supplied frame artwork is bundled here:
-1.jpeg — Festive Celebration (fireworks), 900 × 1600
-2.jpeg — Golden Mirror, 900 × 1600
+karthigai-deepam.webp — Karthigai Deepam, 1080 × 1350 Instagram feed artwork.
+The studio bundles this artwork for offline use. An available backend catalog
+controls which mirror frames are visible to customers.
 
-The app automatically loads these files. No uploads or browser-local frame installation are required.
+The numbered JPEGs are the original frames retained for existing installations.

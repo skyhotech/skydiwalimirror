@@ -6,7 +6,7 @@ from pathlib import Path
 from django.core.files.base import ContentFile
 from PIL import Image, ImageOps
 
-# Posters and frames are drawn at 1080 × 1920; more pixels only cost download time.
+# Retain headroom for previously saved tall posters. New feed posters are 1080 × 1350.
 FRAME_SIZE = (1080, 1920)
 POSTER_SIZE = (1080, 2400)
 SELFIE_SIZE = (1280, 1280)
@@ -21,10 +21,13 @@ def _open(file, max_size):
     """Open an image, letting JPEG decode at a reduced scale when the target
     is much smaller (a 12 MP photo then needs a fraction of the memory)."""
     file.seek(0)
-    image = Image.open(file)
-    if image.format == "JPEG":
-        image.draft("RGB", max_size)
-    return ImageOps.exif_transpose(image)
+    with Image.open(file) as image:
+        image.info["_source_size"] = image.size
+        if image.width * image.height > Image.MAX_IMAGE_PIXELS:
+            raise ValueError("Image dimensions exceed the processing limit.")
+        if image.format == "JPEG":
+            image.draft("RGB", max_size)
+        return ImageOps.exif_transpose(image)
 
 
 def optimized(file, max_size, quality=88, name=None, only_if_smaller=False):
@@ -53,7 +56,9 @@ def optimized(file, max_size, quality=88, name=None, only_if_smaller=False):
         image.convert("RGB").save(out, "JPEG", quality=quality, optimize=True, progressive=True)
         ext = "jpg"
     original = getattr(file, "size", None)
-    if only_if_smaller and original and out.tell() >= original:
+    original_width, original_height = image.info.get("_source_size", image.size)
+    needs_resize = original_width > max_size[0] or original_height > max_size[1]
+    if only_if_smaller and original and out.tell() >= original and not needs_resize:
         return None
     return ContentFile(out.getvalue(), name=f"{stem}.{ext}")
 
@@ -99,7 +104,9 @@ def compressed_photo(file, max_size, target=PHOTO_TARGET_BYTES, name=None):
         image = _open(file, max_size)
     except Exception:
         return None
-    if getattr(file, "size", 0) and file.size <= target:
+    original_width, original_height = image.info.get("_source_size", image.size)
+    if (getattr(file, "size", 0) and file.size <= target
+            and original_width <= max_size[0] and original_height <= max_size[1]):
         return None
     if image.mode in ("RGBA", "LA", "P"):
         rgba = image.convert("RGBA")

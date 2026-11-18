@@ -1,154 +1,142 @@
-# SKY Diwali Selfie Studio
+# SKY Karthigai Deepam Selfie Studio
 
-A mobile-first, browser-only Diwali poster camera for **SKY Mobile & Electronics**. Customers take a selfie, capture their actual purchase in the poster’s small product card, and share the completed poster with a generated SKY Instagram caption.
+The studio creates 1080 × 1350 (4:5) Instagram feed posters. On an existing
+installation, run `python manage.py seed_mirrors --hide-legacy` from
+`backend/` to install the Deepam frame and hide the three original built-in
+mirrors. Staff can create, edit, reorder, hide, show, or delete frames under
+**Mirrors** in the staff dashboard.
 
-## Start locally
+A React/TypeScript camera studio for SKY Mobile & Electronics, with a Django
+API and staff dashboard. The public manager/kiosk scans invoices and IMEIs,
+selects a branch and creates private customer links. Customers use their link to
+accept terms, review the offer, spin for a server-selected gift, capture a selfie
+and product photos, and share their poster. Staff review submitted links and
+WhatsApp/follow screenshot proof in the authenticated dashboard.
 
-Requires Node.js 22.12+ and npm.
+## Local setup
+
+Use Node.js 22.12+ and Python 3.12 or 3.13.
 
 ```sh
-npm install
+npm ci
+python3.13 -m venv backend/.venv
+backend/.venv/bin/pip install -r backend/requirements.txt
+cp backend/.env.example backend/.env
+# Set a random DJANGO_SECRET_KEY in backend/.env.
+backend/.venv/bin/python backend/manage.py migrate
+backend/.venv/bin/python backend/manage.py seed_mirrors
+backend/.venv/bin/python backend/manage.py createsuperuser
 npm run dev
 ```
 
-Installation automatically prepares MediaPipe WASM files and downloads the face-landmarker and selfie-segmentation models into `public/ai/`. No API keys or paid services are required. The Django backend (see below) is optional; without it the studio uses the built-in frames and keeps photos on the device. Internet access is needed for the first installation. If an optional model download fails, run `npm run setup` again; manual camera capture remains available.
+`mysqlclient` needs MySQL/MariaDB client development libraries and `pkg-config`
+on macOS/Linux. SQLite-only development can install the other pinned packages;
+MySQL deployment still requires the complete requirements file.
 
-Open the localhost URL printed by Vite. Phone camera access requires **HTTPS**; an ordinary HTTP LAN address usually cannot use cameras. Browser camera permission must be granted.
+`npm ci` copies MediaPipe WASM and downloads optional face/gesture models into
+`public/ai/`. Retry `npm run setup` if a model download fails. No AI API key is
+needed; inference stays on the device. Manual photography works without models.
 
-## Customer flow
+`npm run dev` starts Vite and an available `backend/.venv` Django environment.
+The studio is at `http://localhost:5173`; the staff dashboard is at
+`http://localhost:5173/sky/mirror/admin/`. The backend is required for first-time
+registration and prize selection. `npm run dev:frontend` starts Vite alone.
+Remembered drafts can be opened when the API is unavailable, but registration,
+spinning and uploads need a connection.
 
-1. Opening the link goes directly to the front-camera poster preview. There is no welcome screen, upload-photo button, or camera-flip button.
-2. Swipe or use the bottom slider to select one of the two original frames.
-3. Tap **Post on Instagram** inside the poster to capture the selfie. The selfie stays in the large mirror, and the rear camera automatically opens inside the small purchased-product card. If the rear camera is unavailable, the front camera is selected automatically.
-4. Tap **Capture product & post**. The product photo is captured without selfie effects or mirroring, the camera stops, and a 1080 × 1920 poster is generated with both actual photos.
-5. The app immediately attempts to share the poster and generated SKY caption through the device share sheet. Choose **Instagram → Post/Feed** when available. The caption is also copied when browser permissions allow; paste it if Instagram omits supplied text.
+Phone camera access requires HTTPS or localhost and browser camera permission.
+An ordinary HTTP LAN URL generally cannot use the camera.
 
-After capture, customers can retake the product, add another product (up to five), download, or open the editor. The editor supports photo positioning and zoom, product layouts, optional customer-entered captions, PNG/JPEG, and optional 2160 × 3840 output. Preview and export use the same Canvas renderer. Camera controls and posting buttons are never included in the exported image.
+## Customer workflow
 
-## Original frames included
+1. A public manager/kiosk creates the purchase link using invoice, IMEI and branch
+   information. Invoice PDFs use native text first, then bounded OCR when needed.
+2. The customer opens their private link, accepts terms and completes the offer
+   and review steps. The server assigns a gift once.
+3. The customer captures a selfie and product photos, chooses a frame and prepares
+   a poster. Manual capture works when optional gesture models are unavailable.
+4. Sharing records opened/shared actions and submitted post links. These signals
+   do not prove a public post was published. Staff can request a WhatsApp status
+   screenshot through a prefilled WhatsApp draft and review uploaded proof.
+5. The four dashboard platform cards open the corresponding sharer lists.
 
-- `public/frames/1.jpeg`: Festive Celebration, 900 × 1600.
-- `public/frames/2.jpeg`: Golden Mirror, 900 × 1600.
+Private links are bearer credentials: keep them private. The manager/kiosk remains
+public by explicit product decision; throttles and upload limits reduce abuse but
+are not staff authentication. No screenshot request is automatically sent.
 
-Both load automatically for every visitor. There is no frame-upload prompt. The supplied SKY logo and promotional text remain part of the original artwork. The compositor removes the neutral mirror surface for the selfie and places actual product photos in the existing bottom card. Decorative lights, typography, and frame details remain in front. Check mask edges on real devices, especially near hair, warm highlights, and promotional badges.
+## Camera, images and storage
 
-## Selfie effects
+Camera attempts are invalidated on pause, hide, unmount and device changes.
+Late permission results are stopped, capture waits for playable video, and
+interrupted tracks offer retry. Denied permission is retried only by a user
+request or a granted-permission change. A startup deadline reports failure;
+it never declares an unready camera successful.
 
-The Smile filter is always enabled at **100% configured strength**, with no visible filter controls. It uses local MediaPipe face landmarks and a geometric mouth warp; it is a playful camera filter rather than generative expression replacement.
+Frame downloads have explicit failure/retry states and a bounded cache.
+Customer uploads accept JPEG, PNG and WebP, up to 12 MB and 25 megapixels.
+Opaque photos are resized and compressed toward a 200 KB target; transparent
+images retain transparency. Staff thumbnails are generated separately.
 
-Portrait mode uses a local selfie-segmentation model to keep the person sharp while applying **20% background blur and warm golden bokeh lights** behind them. Here, 20% maps to a 4.8px blur radius at a 1080px short edge, scaled to the processed selfie resolution. Effects are included in captured selfies and exports. Product photos are unfiltered.
+The latest draft and poster are stored as Blobs in IndexedDB, associated with
+the customer number and private token. Rapid edits coalesce to the newest pending save. Storage
+failure is reported and does not prevent camera use. Download important photos.
 
-Inference runs at a controlled cadence, pauses with camera/tab lifecycle changes, and releases models and media tracks on unmount. Unsupported or failed effects fall back to normal manual photography with a status message. Hair edges, fast movement, lighting, expression appearance and performance need real-phone validation.
+Uploads are stored in a separate durable outbox. Network failures leave them
+queued; invalid uploads stay marked as failed for staff recovery rather than
+being silently deleted. A corrected export replaces that entry. **Next customer**
+clears the active draft but deliberately retains pending uploads for delivery.
+Browser storage eviction/private mode can still prevent recovery; this is not
+an off-device backup or guaranteed delivery service.
 
-## Browser-local photo storage
+## Sharing
 
-The latest selfie, product photos, edits, selected frame/layout and generated poster are automatically stored as Blobs in **IndexedDB** on the customer’s browser. Refresh restores a selfie-only draft to product capture, or a completed draft to the editor. This is local storage, not cloud backup.
+The share payload includes the poster, SKY caption and `@skymobileandelectronics`.
+The customer chooses Instagram and completes publication. A website cannot
+force a share target, guarantee caption autofill or confirm publication.
+Unsupported sharing downloads the poster and attempts to open Instagram.
+Cancelled sharing keeps the prepared poster available for another tap.
 
-**Clear saved photos** deletes the saved draft and poster and starts again. **Create another** also clears the previous draft. Only the latest session is retained, not a photo history. Browser data clearing, storage eviction, private browsing or quota restrictions can affect persistence. Saving failures are shown without blocking camera capture or downloads. Important posters can be downloaded separately.
+## Staff API and privacy
 
-## Instagram behavior and limitations
+The dashboard manages themes, customers, branches, QR codes and CSV exports.
+Staff APIs require a Django staff session and CSRF protection. Customer image
+URLs require staff authentication or the owning customer token for their own
+poster/selfie; invoice and proof files remain staff-only. Responses use private,
+no-store caching. Deploy the matching proxy and frontend changes together.
+Previously cached public copies require separate cache purging.
 
-The generated caption includes SKY Mobile & Electronics, `@skymobileindia`, and festive hashtags. Optional product labels are included only when the customer supplies them; product specifications, prices and discounts are not invented.
-
-A website cannot force a particular installed share app, guarantee Instagram’s Post composer or caption autofill, or confirm actual publication. The customer chooses Instagram in the share sheet and completes the post. If sharing is unsupported, the poster downloads and the app attempts to open instagram.com. Use **Open Instagram** if the browser blocks the new tab, then select **+ → Post**, the saved poster, and paste the caption.
-
-Some browsers expire the click activation while the captured image is encoded and the poster is generated. If the first sharing attempt is refused, the prepared file and caption remain available; tap **Post on Instagram** again for a fresh sharing action. Cancelled or failed sharing preserves the data. No Instagram account token, login, or publishing API is used.
-
-## Privacy
-
-Facial landmarks, segmentation masks and expression scores are processed on the device and never persisted. When the Django backend is running, each exported poster and its original selfie are uploaded to it and shown to staff under **Customers**; without the backend, photos stay in the browser. There are no analytics or third-party image-processing services. Get customer consent before storing selfies.
-
-Camera tracks stop before switching cameras, after completing a capture, when leaving the camera component, and while the tab is hidden. Blob URLs are revoked when photos are replaced or cleared.
-
-## Build and deploy
+## Verification
 
 ```sh
 npm run check
-npm run build
-npm run preview
-```
-
-Deploy `dist/` to any HTTPS static host. A typical build configuration is:
-
-- Install: `npm ci` (includes automatic model setup).
-- Build: `npm run build`.
-- Output directory: `dist`.
-
-Allow same-origin MediaPipe scripts/WASM and local inference if adding a Content Security Policy. Serve `.wasm` as `application/wasm`. Relative asset paths support deployment beneath a subdirectory. No server-side application is needed unless you use the backend.
-
-`node_modules/`, `dist/`, test reports and downloaded `public/ai/` files are deliberately excluded from Git. Source, the lockfile, setup script and both original frames are included.
-
-## Tests
-
-```sh
-npm test
 npx playwright install chromium
 npm run test:e2e
+backend/.venv/bin/python backend/manage.py test mirrors --settings=skymirror.test_settings
+backend/.venv/bin/python backend/manage.py makemigrations --check --dry-run --settings=skymirror.test_settings
+npx playwright test --config=playwright.integration.config.ts
 ```
 
-Unit tests cover smile-warp behavior, both frame layouts, generated captions, portrait strength and confidence alpha. Chromium desktop/mobile tests cover direct camera opening, front/rear selection and fallback, a live product preview in the small product card, combined poster export, share payloads and caption copying, download/open-Instagram fallback, missing-control assertions, foreground/background compositing, and IndexedDB refresh/clear behavior.
+SQLite tests use an isolated in-memory database/cache and skip `backend/.env`.
+The integration suite starts disposable loopback servers on 8001/5174, with
+synthetic media, a temporary database and a test staff account. It does not use
+local or production databases. Synthetic camera streams and Chromium mobile
+viewports do not replace Safari/Android/iPhone hardware testing.
 
-Camera streams, share targets and test customer images are synthetic. Automated mobile viewports are not real iPhone/Android hardware tests. Check actual Safari/Chrome camera permissions, rear-camera behavior, mirror orientation, hair/face effect quality, gestures, memory limits, storage availability and Instagram share targets on real phones before a campaign.
+## Deployment
 
-## Source guide
+Build with `npm run build` and serve `dist/` over HTTPS. Same-origin `/api` and
+`/media` proxy to Django; `VITE_API_URL` selects a separate API origin. The
+existing Vercel/VPS routing is in `vercel.json` and `deploy/`. Serve WASM as
+`application/wasm`, allow same-origin model resources and configure CORS for
+remote frame artwork so Canvas exports are not tainted.
 
-- `src/components/CameraStudio.tsx`: inline selfie/product capture and immediate sharing.
-- `src/components/Editor.tsx`: editing, export, captions and sharing.
-- `src/components/Templates.tsx`: mobile two-frame slider.
-- `src/templates/index.ts`: original artwork paths and design-space coordinates.
-- `src/lib/renderer.ts`: shared preview/export compositor and mirror masks.
-- `src/hooks/useCamera.ts`: camera requests, fallback and cleanup.
-- `src/hooks/useExpression.ts`: local Smile and portrait inference.
-- `src/lib/portrait.ts`: sharp-person/background-blur and gold-light compositing.
-- `src/lib/persistence.ts`: IndexedDB draft restoration and serialized saves.
-- `src/lib/store.ts`: session state and Blob lifecycle.
-- `src/lib/sharing.ts`: SKY caption and clipboard helpers.
-- `scripts/setup.mjs`: automatic local AI runtime/model provisioning.
+Set a random production `DJANGO_SECRET_KEY` of at least 50 characters,
+`DJANGO_DEBUG=0`, explicit allowed hosts/CORS/CSRF origins, `STUDIO_URL`, shared
+`REDIS_URL` for multiple workers, and the exact `TRUSTED_PROXIES` count. The
+built-in Django admin defaults off in production; the dashboard login has a
+failure lockout. Failed/slow backend requests emit structured diagnostics with
+request IDs and no customer body/query data. Responses include `X-Request-ID`
+and `Server-Timing`. Monitoring/alert routing still needs operational setup.
 
-Implementation references: [MediaPipe Face Landmarker](https://developers.google.com/edge/mediapipe/solutions/vision/face_landmarker/web_js), [MediaPipe Image Segmenter](https://developers.google.com/edge/mediapipe/solutions/vision/image_segmenter), [Web Share API](https://developer.mozilla.org/en-US/docs/Web/API/Navigator/share).
-
-## Backend (Django REST Framework)
-
-`backend/` holds the mirror-theme API and the staff dashboard.
-
-```bash
-cd backend
-python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
-cp .env.example .env                            # then set DJANGO_SECRET_KEY
-.venv/bin/python manage.py migrate
-.venv/bin/python manage.py seed_mirrors        # imports public/frames as mirrors
-.venv/bin/python manage.py createsuperuser
-.venv/bin/python manage.py runserver 8000   # or just `npm run dev` from the root
-```
-
-`npm run dev` starts Django and Vite together. Open <http://localhost:5173/> for the studio and <http://localhost:5173/sky/mirror/admin/> for the dashboard.
-
-- Dashboard: <http://localhost:8000/sky/mirror/admin/>, with **Dashboard**, **Mirrors** and **Customers** in the sidebar.
-  - **Mirrors** lets you create, edit and delete themes and upload artwork. Drag the selfie and product boxes on the artwork to place them, and drag ⠿ to reorder the list.
-  - **Customers** shows every exported poster with the original selfie and the mirror theme used.
-- The studio (`npm run dev`) proxies `/api` and `/media` to port 8000 and listens on `GET /api/mirrors/stream/` (server-sent events), so admin edits appear instantly without a refresh. If the stream drops, it falls back to checking `GET /api/mirrors/version/` every second.
-- Each exported poster is uploaded to `POST /api/customers/`. Re-exporting the same selfie updates its record instead of adding a new one.
-- Production: set `DJANGO_SECRET_KEY`, `DJANGO_DEBUG=0`, `DJANGO_ALLOWED_HOSTS` and `CORS_ALLOWED_ORIGINS`, and set `VITE_API_URL` when the API is on another origin.
-
-### Customers, prizes and face check
-
-- Every customer signs in with a mobile number first. Fake-looking numbers such as 9876543210 or 9999999999 are refused. Each number gets one customer record and one prize, picked by the server.
-- Tapping **Proceed** counts as consent to the selfie and face check. The browser turns the selfie into a 128-number face fingerprint (`@vladmandic/face-api`; models are copied to `public/ai/face` by `npm run setup`). If the same face already won under another number, the customer gets that earlier prize, and the dashboard flags it with "⚠ Same face as …".
-
-### Security and rate limits
-
-- API limits are counted per IP: register 60/min, spin 120/hour, upload 120/min, and 600/min for everything else. Each mobile number is also limited to 10 requests an hour, and each network to 20 open live-update streams.
-- Staff sign-in locks a username or network for 15 minutes after 5 failed attempts.
-- Uploads must be PNG, JPEG or WebP images of 12 MB or less.
-- With `DJANGO_DEBUG=0` the backend refuses to start without a `DJANGO_SECRET_KEY`. It also turns on HTTPS redirect, HSTS and secure cookies. `manage.py check --deploy` passes.
-- When running more than one server process, set `REDIS_URL` so all processes share the rate-limit counters.
-
-### Backups (prevent data loss)
-
-```bash
-cd backend && .venv/bin/python manage.py backup   # → backend/backups/, keeps the newest 14
-# cron, every 6 hours:
-# 0 */6 * * * cd /path/to/skydiwalimirror/backend && .venv/bin/python manage.py backup
-```
-
-The database runs in WAL mode, so kiosks uploading at the same time wait for each other instead of failing. **Export CSV** under Customers downloads every customer.
+Set `STUDIO_URL` to the public frontend URL. Django redirects its home path
+there and preserves branch and customer link parameters.

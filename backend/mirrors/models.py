@@ -21,8 +21,10 @@ def validate_rect(value):
     if not isinstance(value, dict) or set(value) != {"x", "y", "w", "h"}:
         raise ValidationError("Rect must have exactly x, y, w and h.")
     try:
+        if any(isinstance(value[k], bool) or float(value[k]) != int(value[k]) for k in ("x", "y", "w", "h")):
+            raise ValueError
         x, y, w, h = (int(value[k]) for k in ("x", "y", "w", "h"))
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         raise ValidationError("Rect values must be integers.")
     if w < 20 or h < 20:
         raise ValidationError("Rect must be at least 20 × 20.")
@@ -94,6 +96,7 @@ class Branch(models.Model):
     name = models.CharField(max_length=80)
     address = models.CharField(max_length=200, blank=True)
     phone = models.CharField(max_length=20, blank=True)
+    image = models.ImageField(upload_to=customer_path, blank=True)
     # An inactive branch's link and QR code stop working.
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -115,11 +118,54 @@ class Branch(models.Model):
         super().save(*args, **kwargs)
 
 
-# Spin-the-wheel prizes; ids match REWARDS in src/lib/rewards.ts.
-REWARD_IDS = [
-    "neckband", "mini-speaker", "smart-watch",
-    "wired-headphone", "mobile-stand", "power-bank",
-]
+class SpinItem(models.Model):
+    """A gift on the wheel. A customer can win it when their bill falls inside
+    min_bill..max_bill (no max_bill = no upper limit); weight sets how likely
+    it is against the other gifts in that range."""
+
+    slug = models.SlugField(unique=True, max_length=40, blank=True)
+    name = models.CharField(max_length=40)
+    image = models.ImageField(upload_to=customer_path, blank=True)
+    min_bill = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    max_bill = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    weight = models.PositiveIntegerField(default=1)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["min_bill", "name", "id"]
+
+    def __str__(self):
+        return self.name
+
+    def save(self, *args, **kwargs):
+        if not self.slug:
+            base = slugify(self.name)[:34] or "gift"
+            slug, n = base, 2
+            while SpinItem.objects.filter(slug=slug).exclude(pk=self.pk).exists():
+                slug, n = f"{base}-{n}", n + 1
+            self.slug = slug
+        super().save(*args, **kwargs)
+
+    @classmethod
+    def for_bill(cls, bill):
+        """Gifts this bill can win. A bill outside every range gets the highest
+        range below it, so a customer is never left without a wheel."""
+        items = list(cls.objects.filter(is_active=True))
+        if bill is None:
+            return items
+        matching = [
+            i for i in items
+            if i.min_bill <= bill and (i.max_bill is None or bill <= i.max_bill)
+        ]
+        if matching:
+            return matching
+        below = [i for i in items if i.min_bill <= bill]
+        if not below:
+            return items
+        top = max(i.min_bill for i in below)
+        return [i for i in below if i.min_bill == top]
 
 
 class Customer(models.Model):
@@ -128,7 +174,7 @@ class Customer(models.Model):
     session = models.CharField(max_length=64, unique=True)
     name = models.CharField(max_length=80, blank=True)
     # One customer per mobile number; blank for records made before sign-in.
-    phone = models.CharField(max_length=20, blank=True)
+    phone = models.CharField(max_length=20, blank=True, null=True)
     mirror = models.ForeignKey(
         Mirror, null=True, blank=True, on_delete=models.SET_NULL, related_name="customers"
     )
@@ -152,6 +198,42 @@ class Customer(models.Model):
     repeat_of = models.ForeignKey(
         "self", null=True, blank=True, on_delete=models.SET_NULL, related_name="repeats"
     )
+    # Purchase details entered by the store manager.
+    email = models.EmailField(blank=True)
+    product_details = models.CharField(max_length=160, blank=True)
+    # 15-digit IMEI for phones, the serial number for other products.
+    imei = models.CharField(max_length=30, blank=True, null=True)
+    invoice_number = models.CharField(max_length=40, blank=True, null=True)
+    bill_value = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    invoice_image = models.ImageField(upload_to=customer_path, blank=True)
+    # The first screen of the link: terms, and an optional video review pledge.
+    terms_accepted_at = models.DateTimeField(null=True, blank=True)
+    video_review = models.BooleanField(default=False)
+    instagram_id = models.CharField(max_length=30, blank=True)
+    # Screenshot of the customer's WhatsApp Status, checked by staff.
+    whatsapp_proof = models.ImageField(upload_to=customer_path, blank=True)
+    whatsapp_proof_status = models.CharField(
+        max_length=10, blank=True,
+        choices=[("pending", "Pending"), ("verified", "Verified"), ("rejected", "Rejected")],
+    )
+    # Screenshot of our Instagram profile showing "Following", checked by staff.
+    follow_proof = models.ImageField(upload_to=customer_path, blank=True)
+    follow_proof_status = models.CharField(
+        max_length=10, blank=True,
+        choices=[("pending", "Pending"), ("verified", "Verified"), ("rejected", "Rejected")],
+    )
+    # Asked when the customer shares on Facebook.
+    facebook_profile = models.CharField(max_length=200, blank=True)
+    # Asked straight after the spin, before the mirror selfie.
+    rating = models.PositiveSmallIntegerField(null=True, blank=True)
+    review = models.TextField(blank=True)
+    # Every word read from the invoice photo, and how sharp that photo was.
+    ocr_text = models.TextField(blank=True)
+    blur_score = models.FloatField(null=True, blank=True)
+    # Counts how often the link changed because the purchase details changed.
+    link_version = models.PositiveIntegerField(default=0)
+    # Secret in the WhatsApp link; only its holder can spin for this customer.
+    spin_token = models.CharField(max_length=43, null=True, blank=True, unique=True)
     selfie = models.ImageField(upload_to=customer_path, blank=True)
     poster = models.ImageField(upload_to=customer_path, blank=True)
     # Small previews for the dashboard grid; full images open on click.
@@ -163,12 +245,72 @@ class Customer(models.Model):
     class Meta:
         ordering = ["-created_at"]
         constraints = [
+            # Plain unique keys: MySQL ignores conditional ones. Empty values
+            # are stored as NULL (see save), which any number of rows may share.
+            models.UniqueConstraint(fields=["phone"], name="unique_customer_phone"),
+            models.UniqueConstraint(fields=["imei"], name="unique_customer_imei"),
             models.UniqueConstraint(
-                fields=["phone"],
-                condition=~models.Q(phone=""),
-                name="unique_customer_phone",
-            )
+                fields=["branch", "invoice_number"], name="unique_branch_invoice"
+            ),
         ]
+
+    # Unique, but optional: "" would count as a value and clash; NULL doesn't.
+    OPTIONAL_UNIQUE = ("phone", "imei", "invoice_number")
+
+    def save(self, *args, **kwargs):
+        for field in self.OPTIONAL_UNIQUE:
+            if getattr(self, field) == "":
+                setattr(self, field, None)
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return self.name or self.phone or f"Customer #{self.pk}"
+
+    @property
+    def next_step(self):
+        """Where this customer's link takes them."""
+        if self.poster:
+            return "share"
+        if not self.terms_accepted_at:
+            return "terms"
+        if not self.reward:
+            return "spin"
+        return "mirror" if self.rating else "review"
+
+    @property
+    def stage(self):
+        """How far this customer got; anything but "completed" is abandoned."""
+        if self.poster:
+            return "completed"
+        if self.reward:
+            return "spun"
+        kinds = {e.kind for e in self.events.all()}
+        if "link_opened" in kinds:
+            return "link_opened"
+        return "whatsapp_sent" if "whatsapp_sent" in kinds else "checked"
+
+
+class CustomerEvent(models.Model):
+    """One step of a purchase's journey, for the admin timeline. Failed checks
+    have no customer yet, so they keep the number that was typed."""
+
+    PLATFORMS = ["instagram", "facebook", "whatsapp", "more"]
+    # Opened the platform; came back from sharing; pasted their post's link.
+    OPEN_KINDS = [f"share_opened_{p}" for p in PLATFORMS]
+    SHARE_KINDS = [f"shared_{p}" for p in PLATFORMS]
+    POSTED_KINDS = [f"posted_{p}" for p in PLATFORMS]
+    # Shared on Instagram and WhatsApp: the gift may be collected.
+    GIFT_UNLOCKED = "gift_unlocked"
+    # Opened the Instagram profile to follow / the Google review page (optional).
+    STEP_KINDS = ["follow_opened", "google_review_opened"]
+
+    customer = models.ForeignKey(
+        Customer, null=True, blank=True, on_delete=models.CASCADE, related_name="events"
+    )
+    phone = models.CharField(max_length=20, blank=True)
+    kind = models.CharField(max_length=30, db_index=True)
+    detail = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        ordering = ["created_at", "id"]

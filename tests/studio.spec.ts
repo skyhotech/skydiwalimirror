@@ -1,28 +1,77 @@
 import { test, expect, type Page } from "@playwright/test";
 // Never write test customers into the real backend: stub the upload endpoint.
 // Individual tests can override this with their own page.route().
-// Customers are signed in by mobile number; the server picks the prize once.
+// The customer's link says they are past terms, spin, offer and rating, so
+// these tests start at the mirror camera.
+test.beforeEach(async ({ page }) => {
+  await page.route("**/api/**", (r) => r.fulfill({ json: {} }));
+});
 test.beforeEach(async ({ page }) => {
   await page.route("**/api/customers/", (route) =>
     route.fulfill({ status: 201, json: { id: 0 } }),
   );
-  await page.route("**/api/customers/register/", (route) =>
-    route.fulfill({ json: { phone: "9845012345", reward: null } }),
-  );
   await page.route("**/api/customers/spin/", (route) =>
     route.fulfill({ json: { reward: "smart-watch" } }),
   );
-  await page.addInitScript(() =>
-    localStorage.setItem("sky-customer-phone", "9845012345"),
+  await page.route("**/api/customers/link/**", (route) =>
+    route.fulfill({
+      json: {
+        phone: "9845012345",
+        name: "Asha",
+        reward: "power-bank",
+        items: [],
+        poster: null,
+        next: "mirror",
+        video_review: true,
+      },
+    }),
+  );
+  await page.addInitScript(
+    () => (
+      localStorage.setItem("sky-customer-phone", "9845012345"),
+      localStorage.setItem("sky-spin-token", "test-token")
+    ),
   );
 });
+/** Which photos the studio has saved on the device for this visit. */
+function savedDraft(page: Page) {
+  return page.evaluate(async () => {
+    const db = await new Promise<IDBDatabase>((resolve, reject) => {
+      const r = indexedDB.open("sky-private-photos", 1);
+      r.onsuccess = () => resolve(r.result);
+      r.onerror = () => reject(r.error);
+    });
+    const draft = await new Promise<{ selfie?: unknown } | undefined>(
+      (resolve) => {
+        const r = db
+          .transaction("drafts")
+          .objectStore("drafts")
+          .get("latest-draft");
+        r.onsuccess = () => resolve(r.result);
+        r.onerror = () => resolve(undefined);
+      },
+    );
+    db.close();
+    return { selfie: Boolean(draft?.selfie) };
+  });
+}
 async function mockCamera(
   page: Page,
   rearUnavailable = false,
   withAi = false,
   blank = false,
 ) {
-  if (!withAi) await page.route("**/ai/**", (r) => r.abort());
+  if (!withAi) {
+    await page.route("**/ai/**", (r) => r.abort());
+    // Where the face model loads anyway (CI downloads it), the fake camera
+    // shows no face: skip the face check, and keep auto capture idle.
+    await page.addInitScript(() => {
+      (window as { skyFakeCue?: unknown }).skyFakeCue = {
+        smile: 0,
+        gesture: "",
+      };
+    });
+  }
   await page.addInitScript(
     ({ rearUnavailable }) => {
       const calls: string[] = [],
@@ -95,7 +144,7 @@ async function mockCamera(
     });
 }
 async function takeSelfie(page: Page) {
-  await page.goto("/");
+  await page.goto("/?spin=test-token");
   await expect(
     page
       .locator(".camera-stage")
@@ -113,13 +162,15 @@ async function takeSelfie(page: Page) {
 }
 // The prize wheel opens after the first product photo, spins by itself and
 // the prize is added to the poster automatically.
+// The wheel now comes before the camera; these tests start with a prize won.
+// After the product photo the guided share window opens: these camera tests
+// close it to reach the poster (the window has its own test).
 async function spinAndClaim(page: import("@playwright/test").Page) {
-  const dialog = page.getByRole("dialog", { name: "Spin the wheel" });
-  await dialog.getByRole("button", { name: "Tap to spin" }).click();
-  await expect(dialog.getByRole("status")).toHaveText(/You won a/, {
-    timeout: 10_000,
-  });
-  await expect(dialog).toBeHidden({ timeout: 10_000 });
+  const close = page.getByRole("dialog").getByRole("button", { name: "Close" });
+  await close.waitFor({ timeout: 15_000 }).then(
+    () => close.click(),
+    () => {},
+  );
 }
 test("rear camera appears in the small product box, then captures and shares", async ({
   page,
@@ -176,11 +227,18 @@ test("rear camera appears in the small product box, then captures and shares", a
     )
     .toMatchObject({
       files: 1,
-      text: expect.stringContaining("@skymobileindia"),
+      text: expect.stringContaining("@skymobileandelectronics"),
     });
+  // After Instagram, WhatsApp Status is suggested next.
+  await expect(
+    page.getByRole("dialog", {
+      name: "One more step for your iPhone 15 chance!",
+    }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Later" }).click();
   await page.getByRole("button", { name: "Edit poster", exact: true }).click();
   await page
-    .getByRole("button", { name: "Festive Celebration", exact: true })
+    .getByRole("button", { name: "Karthigai Deepam", exact: true })
     .click();
   // Kiosk editor: only the frame slider and posting remain.
   for (const hidden of [
@@ -221,11 +279,38 @@ test("product camera automatically falls back to front camera", async ({
     page.getByRole("textbox", { name: "Your SKY Instagram caption" }),
   ).toBeVisible();
 });
-test("filter controls, uploads and flip controls are absent", async ({
+test("the flip button swaps between front and back camera", async ({
   page,
 }) => {
   await mockCamera(page);
-  await page.goto("/");
+  await page.goto("/?spin=test-token");
+  const flip = page.getByRole("button", { name: "Switch to back camera" });
+  await expect(
+    page.getByRole("button", { name: "Post on Instagram", exact: true }),
+  ).toBeEnabled();
+  await flip.click();
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        (window as unknown as { cameraCalls: string[] }).cameraCalls.at(-1),
+      ),
+    )
+    .toContain('"exact":"environment"');
+  await page.getByRole("button", { name: "Switch to front camera" }).click();
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        (window as unknown as { cameraCalls: string[] }).cameraCalls.at(-1),
+      ),
+    )
+    .toContain('"ideal":"user"');
+  await expect(
+    page.getByRole("button", { name: "Pause camera", exact: true }),
+  ).toBeVisible();
+});
+test("filter controls and uploads are absent", async ({ page }) => {
+  await mockCamera(page);
+  await page.goto("/?spin=test-token");
   await expect(
     page.getByRole("button", {
       name: "Post on Instagram",
@@ -234,7 +319,7 @@ test("filter controls, uploads and flip controls are absent", async ({
   ).toBeEnabled();
   await expect(
     page.getByRole("button", {
-      name: /Smile filter|Smile to capture|Upload photo|Flip camera/,
+      name: /Smile filter|Smile to capture|Upload photo/,
     }),
   ).toHaveCount(0);
   await expect(page.locator("input[type=file]")).toHaveCount(0);
@@ -244,7 +329,7 @@ test("filter controls, uploads and flip controls are absent", async ({
 });
 test("a blank or covered-camera selfie is refused", async ({ page }) => {
   await mockCamera(page, false, false, true);
-  await page.goto("/");
+  await page.goto("/?spin=test-token");
   const shutter = page
     .locator(".camera-stage")
     .getByRole("button", { name: "Post on Instagram", exact: true });
@@ -260,9 +345,10 @@ test("a blank or covered-camera selfie is refused", async ({ page }) => {
     }),
   ).toHaveCount(0);
 });
-test("permission denial offers retry without upload or flip suggestions", async ({
+test("permission denial offers retry without upload suggestions", async ({
   page,
 }) => {
+  await page.clock.install();
   await page.addInitScript(() => {
     Object.assign(window, { cameraAsks: 0 });
     Object.defineProperty(navigator.mediaDevices, "getUserMedia", {
@@ -272,18 +358,29 @@ test("permission denial offers retry without upload or flip suggestions", async 
       },
     });
   });
-  await page.goto("/");
+  await page.goto("/?spin=test-token");
   await expect(page.getByText(/Camera permission was denied/)).toBeVisible();
+  // Refused: the website's steps, or on iPhone (permission lives in
+  // Settings → Safari) the phone's.
   await expect(
-    page.getByRole("alert").filter({ hasText: "SKY needs your camera" }),
+    page.getByRole("alertdialog", {
+      name: /Allow the camera for this website|Turn on the camera in your phone settings/,
+    }),
   ).toBeVisible();
-  // The studio keeps asking for the camera by itself.
+  // Permission denial waits for an explicit retry; no repeated browser prompts.
   const asks = () =>
     page.evaluate(
       () => (window as unknown as { cameraAsks: number }).cameraAsks,
     );
   const first = await asks();
-  await expect.poll(asks, { timeout: 12_000 }).toBeGreaterThan(first + 1);
+  await page.clock.fastForward(12_000);
+  expect(await asks()).toBe(first);
+  await page.clock.resume();
+  await page
+    .getByRole("alertdialog")
+    .getByRole("button", { name: "Try again", exact: true })
+    .click();
+  await expect.poll(asks).toBe(first + 1);
   await expect(
     page.getByRole("button", { name: "Retry camera" }),
   ).toBeVisible();
@@ -295,32 +392,18 @@ test("permission denial offers retry without upload or flip suggestions", async 
   ).toBeDisabled();
   await expect(page.getByText(/upload a photo|Flip camera/i)).toHaveCount(0);
 });
-test("both bundled original frames load without any upload prompt", async ({
-  page,
-}) => {
-  await page.goto("/");
-  for (const [name, path] of [
-    ["Golden Mirror", "2.jpeg"],
-    ["Festive Celebration", "1.jpeg"],
-  ]) {
-    await page.getByRole("button", { name, exact: true }).click();
-    await expect(
-      page.getByRole("img", { name: new RegExp(name + " poster preview") }),
-    ).toBeVisible();
-    await expect
-      .poll(() =>
-        page.evaluate(async (file) => {
-          const image = new Image();
-          image.src = "/frames/" + file;
-          await image.decode();
-          return [image.naturalWidth, image.naturalHeight];
-        }, path),
-      )
-      .toEqual([900, 1600]);
-    await expect(
-      page.getByRole("button", { name: "Add frame image" }),
-    ).toHaveCount(0);
-  }
+test("the bundled Deepam frame is an Instagram feed image", async ({ page }) => {
+  await page.goto("/?spin=test-token");
+  await expect(
+    page.getByRole("img", { name: /Karthigai Deepam poster preview/ }),
+  ).toBeVisible();
+  expect(await page.evaluate(async () => {
+    const image = new Image();
+    image.src = "/frames/karthigai-deepam.webp";
+    await image.decode();
+    return [image.naturalWidth, image.naturalHeight];
+  })).toEqual([1080, 1350]);
+  await expect(page.getByRole("button", { name: "Add frame image" })).toHaveCount(0);
 });
 
 test("Post on Instagram shares the completed poster with generated SKY caption", async ({
@@ -378,12 +461,12 @@ test("Post on Instagram shares the completed poster with generated SKY caption",
       files: 1,
       type: "image/jpeg",
       width: 1080,
-      height: 2400,
-      text: expect.stringContaining("@skymobileindia"),
+      height: 1350,
+      text: expect.stringContaining("@skymobileandelectronics"),
     });
   await expect(
     page.getByRole("textbox", { name: "Your SKY Instagram caption" }),
-  ).toHaveValue(/#DiwaliWithSKY/);
+  ).toHaveValue(/#KarthigaiDeepamWithSKY/);
   await expect
     .poll(() =>
       page.evaluate(
@@ -422,7 +505,7 @@ test("Instagram fallback downloads poster and opens Instagram with caption ready
     .locator(".camera-stage")
     .getByRole("button", { name: "Post on Instagram", exact: true })
     .click();
-  expect((await dl).suggestedFilename()).toMatch(/^SKY-Diwali-.+\.jpg$/);
+  expect((await dl).suggestedFilename()).toMatch(/^SKY-Karthigai-Deepam-.+\.jpg$/);
   const instagram = await popup;
   await expect(instagram).toHaveURL("https://www.instagram.com/");
   await instagram.close();
@@ -490,58 +573,9 @@ test("selfie, product photos and generated poster persist locally and can be cle
   await expect(
     page.getByRole("button", { name: "Post on Instagram", exact: true }),
   ).toBeEnabled();
-  // Next customer clears this visit and signs the customer out.
+  // Next customer clears this visit's photos from the device.
   await page.getByRole("button", { name: "Next customer" }).click();
-  await expect(page.getByLabel("Mobile number", { exact: true })).toBeVisible();
-  expect(
-    await page.evaluate(() => localStorage.getItem("sky-customer-phone")),
-  ).toBeNull();
-});
-
-test("prize wheel spins after the product photo and puts the reward on the poster", async ({
-  page,
-}) => {
-  let spins = 0;
-  await page.route("**/api/customers/spin/", (route) => {
-    spins++;
-    return route.fulfill({ json: { reward: "smart-watch" } });
-  });
-  await mockCamera(page);
-  await takeSelfie(page);
-  await page
-    .getByRole("button", {
-      name: "Capture product and post on Instagram",
-      exact: true,
-    })
-    .click();
-  const dialog = page.getByRole("dialog", { name: "Spin the wheel" });
-  await expect(dialog).toBeVisible();
-  // A double tap must not start two spins.
-  await dialog.getByRole("button", { name: "Tap to spin" }).dblclick();
-  await expect(dialog.getByRole("status")).toHaveText("Good luck…");
-  await expect(dialog.getByRole("button")).toHaveCount(0);
-  // The wheel must visibly turn, not jump straight to the result.
-  const angle = () =>
-    page
-      .locator(".spin-wheel")
-      .evaluate((el) => getComputedStyle(el).transform);
-  const early = await angle();
-  await page.waitForTimeout(400);
-  expect(await angle()).not.toBe(early);
-  await expect(dialog.getByRole("status")).toHaveText(
-    /You won a (Neck Band|Mini Speaker|Smart Watch|Wired Headphone|Mobile Stand|Power Bank)!/,
-    { timeout: 10_000 },
-  );
-  await expect(dialog).toContainText("Adding your gift to the poster");
-  await expect(
-    dialog.getByRole("button", { name: "Add to my poster" }),
-  ).toHaveCount(0);
-  await expect(dialog).toBeHidden({ timeout: 5_000 });
-  await expect(
-    page.getByRole("textbox", { name: "Your SKY Instagram caption" }),
-  ).toBeVisible();
-  // One spin, one prize: never a second request.
-  expect(spins).toBe(1);
+  await expect.poll(() => savedDraft(page)).toEqual({ selfie: false });
 });
 
 test("a smile or hand gesture takes the selfie by itself after 3-2-1", async ({
@@ -549,7 +583,7 @@ test("a smile or hand gesture takes the selfie by itself after 3-2-1", async ({
 }) => {
   test.setTimeout(90_000);
   await mockCamera(page, false, true);
-  await page.goto("/");
+  await page.goto("/?spin=test-token");
   const toggle = page.getByRole("button", { name: /Auto capture on/ });
   await expect(toggle).toBeVisible({ timeout: 60_000 });
   // No cue yet: nothing happens.
@@ -570,7 +604,7 @@ test("a smile or hand gesture takes the selfie by itself after 3-2-1", async ({
 test("auto capture can be switched off", async ({ page }) => {
   test.setTimeout(90_000);
   await mockCamera(page, false, true);
-  await page.goto("/");
+  await page.goto("/?spin=test-token");
   const toggle = page.getByRole("button", { name: /Auto capture on/ });
   await expect(toggle).toBeVisible({ timeout: 60_000 });
   await toggle.click();
@@ -583,99 +617,6 @@ test("auto capture can be switched off", async ({ page }) => {
   await page.waitForTimeout(1500);
   await expect(page.locator(".auto-countdown")).toHaveCount(0);
 });
-test("the wheel turns right away even when the prize is slow to arrive", async ({
-  page,
-}) => {
-  // Slow phone or network: the face check and server take a few seconds.
-  await page.route("**/api/customers/spin/", async (route) => {
-    await new Promise((r) => setTimeout(r, 3000));
-    await route.fulfill({ json: { reward: "smart-watch" } });
-  });
-  await mockCamera(page);
-  await takeSelfie(page);
-  await page
-    .getByRole("button", {
-      name: "Capture product and post on Instagram",
-      exact: true,
-    })
-    .click();
-  const dialog = page.getByRole("dialog", { name: "Spin the wheel" });
-  await dialog.getByRole("button", { name: "Tap to spin" }).click();
-  const angle = () =>
-    page
-      .locator(".spin-wheel")
-      .evaluate((el) => getComputedStyle(el).transform);
-  // Before the prize is known the wheel must already be moving. (Samples
-  // avoid 500 ms steps: one full turn takes 500 ms at waiting speed.)
-  await page.waitForTimeout(300);
-  const a = await angle();
-  await page.waitForTimeout(130);
-  const b = await angle();
-  await page.waitForTimeout(170);
-  expect(new Set([a, b, await angle()]).size).toBe(3);
-  await expect(dialog.getByRole("status")).toHaveText(
-    "You won a Smart Watch!",
-    {
-      timeout: 12_000,
-    },
-  );
-});
-test("a rate-limited spin explains itself at once instead of waiting", async ({
-  page,
-}) => {
-  await page.route("**/api/customers/spin/", (route) =>
-    route.fulfill({
-      status: 429,
-      headers: { "Retry-After": "600" },
-      json: { detail: "Request was throttled." },
-    }),
-  );
-  await mockCamera(page);
-  await takeSelfie(page);
-  await page
-    .getByRole("button", {
-      name: "Capture product and post on Instagram",
-      exact: true,
-    })
-    .click();
-  const dialog = page.getByRole("dialog", { name: "Spin the wheel" });
-  await dialog.getByRole("button", { name: "Tap to spin" }).click();
-  await expect(dialog.getByRole("alert")).toHaveText(
-    /Too many tries.*10 minutes/,
-    {
-      timeout: 5_000,
-    },
-  );
-  await expect(dialog.getByRole("button", { name: "Try again" })).toBeVisible();
-});
-test("reloading during the prize wheel cannot re-roll the prize", async ({
-  page,
-}) => {
-  await mockCamera(page);
-  await takeSelfie(page);
-  await page
-    .getByRole("button", {
-      name: "Capture product and post on Instagram",
-      exact: true,
-    })
-    .click();
-  const dialog = page.getByRole("dialog", { name: "Spin the wheel" });
-  await dialog.getByRole("button", { name: "Tap to spin" }).click();
-  await expect(dialog.getByRole("status")).toHaveText(/You won a (.+)!/, {
-    timeout: 10_000,
-  });
-  const first = await dialog.getByRole("status").textContent();
-  // Customer reloads instead of claiming, hoping for a better prize.
-  await page.reload();
-  const again = page.getByRole("dialog", { name: "Spin the wheel" });
-  await expect(again).toBeVisible();
-  await again.getByRole("button", { name: "Tap to spin" }).click();
-  await expect(again.getByRole("status")).toHaveText(first!, {
-    timeout: 10_000,
-  });
-  await expect(again).toBeHidden({ timeout: 5_000 });
-});
-
 test("a failed customer upload is kept and retried until it succeeds", async ({
   page,
 }) => {
@@ -717,135 +658,6 @@ test("a failed customer upload is kept and retried until it succeeds", async ({
   expect(left).toBe(0);
 });
 
-test("customers must enter a valid mobile number before the studio opens", async ({
-  page,
-}) => {
-  const registered: string[] = [];
-  await page.route("**/api/customers/register/", async (route) => {
-    const { phone } = route.request().postDataJSON() as { phone: string };
-    registered.push(phone);
-    await route.fulfill({ json: { phone, reward: null } });
-  });
-  await page.addInitScript(() => localStorage.removeItem("sky-customer-phone"));
-  await mockCamera(page);
-  await page.goto("/");
-  const field = page.getByLabel("Mobile number", { exact: true });
-  await expect(field).toBeVisible();
-  await expect(page.locator(".camera-stage")).toHaveCount(0);
-  const go = page.getByRole("button", { name: "Proceed" });
-  await field.fill("12345");
-  await expect(go).toBeDisabled();
-  await field.fill("5876543210");
-  await expect(go).toBeDisabled();
-  // Made-up looking numbers are refused too.
-  for (const fake of ["9876543210", "9999999999", "9000000000", "9898989898"]) {
-    await field.fill(fake);
-    await expect(go).toBeDisabled();
-  }
-  await expect(
-    page.getByText("Enter a valid 10-digit mobile number."),
-  ).toBeVisible();
-  await field.fill("9123456789");
-  await expect(
-    page.getByText(/agree to a selfie — one gift per mobile number/),
-  ).toBeVisible();
-  await go.click();
-  await expect(page.locator(".camera-stage")).toBeVisible();
-  expect(registered).toEqual(["9123456789"]);
-});
-
-test("a number that already won gets its prize back without spinning", async ({
-  page,
-}) => {
-  await page.route("**/api/customers/register/", (route) =>
-    route.fulfill({ json: { phone: "9845012345", reward: "power-bank" } }),
-  );
-  await mockCamera(page);
-  await takeSelfie(page);
-  await page
-    .getByRole("button", {
-      name: "Capture product and post on Instagram",
-      exact: true,
-    })
-    .click();
-  await expect(
-    page.getByRole("dialog", { name: "Spin the wheel" }),
-  ).toHaveCount(0);
-  await expect(
-    page.getByRole("textbox", { name: "Your SKY Instagram caption" }),
-  ).toBeVisible();
-});
-
-// Reads what the studio saved on the device (the storage status bar is hidden).
-async function savedDraft(page: Page) {
-  return page.evaluate(
-    () =>
-      new Promise<{ selfie: boolean; product: boolean }>((resolve) => {
-        const r = indexedDB.open("sky-private-photos", 1);
-        r.onsuccess = () => {
-          const g = r.result
-            .transaction("drafts")
-            .objectStore("drafts")
-            .get("latest-draft");
-          g.onsuccess = () =>
-            resolve({
-              selfie: g.result?.selfie?.blob instanceof Blob,
-              product: g.result?.products?.[0]?.blob instanceof Blob,
-            });
-          g.onerror = () => resolve({ selfie: false, product: false });
-        };
-        r.onerror = () => resolve({ selfie: false, product: false });
-      }),
-  );
-}
-
-test("sign-in shows a clear message for each kind of failure", async ({
-  page,
-  context,
-}) => {
-  let mode: "busy" | "server" | "down" = "busy";
-  await page.route("**/api/customers/register/", (route) =>
-    mode === "busy"
-      ? route.fulfill({
-          status: 429,
-          headers: { "Retry-After": "45" },
-          json: { detail: "Request was throttled." },
-        })
-      : mode === "server"
-        ? route.fulfill({ status: 500, body: "<html>Server Error</html>" })
-        : route.abort("connectionrefused"),
-  );
-  await page.addInitScript(() => localStorage.removeItem("sky-customer-phone"));
-  await mockCamera(page);
-  await page.goto("/");
-  await page.getByLabel("Mobile number", { exact: true }).fill("9123456789");
-  const go = page.getByRole("button", { name: "Proceed" });
-  const help = page.locator("#phone-help");
-  await go.click();
-  await expect(help).toHaveText(
-    "Too many tries. Please wait 45 seconds and try again.",
-  );
-  mode = "server";
-  await go.click();
-  await expect(help).toHaveText(
-    "Something went wrong on our side. Please try again in a moment.",
-  );
-  mode = "down";
-  await go.click();
-  await expect(help).toHaveText(
-    "Can't reach SKY right now. Please try again in a moment.",
-  );
-  // Losing the connection shows a banner and a clear message on submit.
-  await context.setOffline(true);
-  await expect(page.locator(".offline-banner")).toBeVisible();
-  await go.click();
-  await expect(help).toHaveText(
-    "You're offline. Check the Wi-Fi or mobile data and try again.",
-  );
-  await context.setOffline(false);
-  await expect(page.locator(".offline-banner")).toBeHidden();
-});
-
 test("after posting, the customer sees whether the poster reached SKY", async ({
   page,
 }) => {
@@ -872,4 +684,213 @@ test("after posting, the customer sees whether the poster reached SKY", async ({
   await expect(page.locator(".upload-status")).toHaveText(
     /Poster saved with SKY/,
   );
+});
+
+const failCamera =
+  (name: string, granted = false) =>
+  async ({ page }: { page: Page }) => {
+    await page.addInitScript(
+      ([errorName, isGranted]) => {
+        Object.defineProperty(navigator.mediaDevices, "getUserMedia", {
+          value: async () => {
+            throw new DOMException("Camera failed", errorName as string);
+          },
+        });
+        if (isGranted)
+          Object.defineProperty(navigator, "permissions", {
+            value: {
+              query: async () => ({ state: "granted", onchange: null }),
+            },
+          });
+      },
+      [name, granted] as const,
+    );
+    await page.goto("/?spin=test-token");
+  };
+
+test("allowed in the browser but blocked by the phone: phone settings steps", async ({
+  page,
+}) => {
+  await failCamera("NotAllowedError", true)({ page });
+  const alert = page.getByRole("alertdialog", {
+    name: "Turn on the camera in your phone settings",
+  });
+  await expect(alert).toBeVisible();
+  await expect(alert).toContainText("Open the Settings app.");
+  await expect(alert.getByRole("button", { name: "Try again" })).toBeVisible();
+});
+
+test("a camera in use elsewhere says so", async ({ page }) => {
+  await failCamera("NotReadableError")({ page });
+  await expect(
+    page.getByRole("alertdialog", {
+      name: "The camera is in use or switched off",
+    }),
+  ).toContainText("Close any app using the camera");
+});
+
+test("inside Instagram's built-in browser: open in a real browser", async ({
+  browser,
+}) => {
+  const context = await browser.newContext({
+    userAgent:
+      "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 Instagram 350.0.0.0",
+  });
+  const page = await context.newPage();
+  await page.route("**/api/customers/link/**", (route) =>
+    route.fulfill({
+      json: {
+        phone: "9845012345",
+        name: "Asha",
+        reward: "power-bank",
+        items: [],
+        poster: null,
+        next: "mirror",
+        video_review: true,
+      },
+    }),
+  );
+  await failCamera("NotAllowedError")({ page });
+  const alert = page.getByRole("alertdialog", {
+    name: "Open this page in your browser",
+  });
+  await expect(alert).toContainText("Safari");
+  await expect(alert.getByRole("button", { name: "Copy link" })).toBeVisible();
+  await context.close();
+});
+
+test("guided sharing: Instagram link, WhatsApp, then the gift", async ({
+  page,
+}) => {
+  const events: { kind: string; url?: string }[] = [];
+  await page.route("**/api/customers/event/", (r) => {
+    const body = r.request().postDataJSON() as { kind: string; url?: string };
+    events.push(body);
+    const bad =
+      body.kind === "posted_instagram" &&
+      !/instagram\.com\/(p|reel|stories)\//.test(body.url ?? "");
+    return bad
+      ? r.fulfill({
+          status: 400,
+          json: {
+            url: ["Paste the link to your Instagram post, reel or story."],
+          },
+        })
+      : r.fulfill({ json: { ok: true } });
+  });
+  await mockCamera(page);
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, "share", { value: async () => {} });
+    Object.defineProperty(navigator, "canShare", { value: () => true });
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText: async () => {} },
+    });
+  });
+  await takeSelfie(page);
+  await page
+    .getByRole("button", {
+      name: "Capture product and post on Instagram",
+      exact: true,
+    })
+    .click();
+  const wizard = page.getByRole("dialog");
+  // First the Instagram ID: sharing opens only once it is saved.
+  await page.route("**/api/customers/profile/", (r) =>
+    r.fulfill({ json: { handle: "asha.k" } }),
+  );
+  await expect(wizard).toContainText("Your Instagram ID");
+  await expect(
+    wizard.getByRole("button", { name: "Continue to sharing" }),
+  ).toBeDisabled();
+  await wizard.getByLabel("Instagram ID").fill("@asha.k");
+  await wizard.getByRole("button", { name: "Continue to sharing" }).click();
+  await expect(wizard).toContainText("Step 1: Share on Instagram");
+  await wizard.getByRole("button", { name: "Share on Instagram" }).click();
+  await wizard
+    .getByLabel("Link to your Instagram post")
+    .fill("https://example.com/not-instagram");
+  await wizard.getByRole("button", { name: "Check my post" }).click();
+  await expect(wizard).toContainText("Instagram post, reel or story");
+  await wizard
+    .getByLabel("Link to your Instagram post")
+    .fill("https://www.instagram.com/reel/C1a2b3/");
+  await wizard.getByRole("button", { name: "Check my post" }).click();
+  // Proofs are uploaded; staff verification is simulated by flipping this.
+  let verified = false;
+  const progress = () => ({
+    instagram_post: true,
+    instagram_follow: verified ? "verified" : "pending",
+    whatsapp_status: verified ? "verified" : "pending",
+    google_review_opened: true,
+    ready: verified,
+  });
+  for (const kind of ["whatsapp", "follow"])
+    await page.route(`**/api/customers/${kind}-proof/**`, (r) =>
+      r.request().method() === "POST"
+        ? r.fulfill({ json: { status: "pending" } })
+        : r.fulfill({ json: { status: "pending", progress: progress() } }),
+    );
+  const png = {
+    name: "shot.png",
+    mimeType: "image/png",
+    buffer: Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+      "base64",
+    ),
+  };
+  // Follow our Instagram: open the profile, then a "Following" screenshot.
+  await expect(wizard).toContainText("Step 2: Follow us on Instagram");
+  await page
+    .context()
+    .route("https://www.instagram.com/**", (r) => r.fulfill({ body: "ok" }));
+  const profile = page.waitForEvent("popup");
+  await wizard.getByRole("link", { name: "Open our Instagram" }).click();
+  await (await profile).close();
+  await wizard.getByLabel("Instagram following screenshot").setInputFiles(png);
+  // WhatsApp: share, then a screenshot of the Status.
+  await expect(wizard).toContainText("Step 3: Share on WhatsApp");
+  await wizard.getByRole("button", { name: "Share on WhatsApp" }).click();
+  await wizard.getByLabel("WhatsApp Status screenshot").setInputFiles(png);
+  await expect(wizard).toContainText("Step 4: Share with more friends");
+  await wizard.getByRole("button", { name: "Done" }).click();
+  // Optional Google review, then the progress checklist.
+  await expect(
+    wizard.getByRole("link", { name: "Leave a Google review" }),
+  ).toHaveAttribute("href", /share\.google/);
+  await wizard.getByRole("button", { name: "Continue" }).click();
+  // No gift until staff verify the screenshot.
+  await expect(
+    wizard.getByRole("heading", { name: "Waiting for SKY to verify" }),
+  ).toBeVisible();
+  await expect(wizard).toContainText(
+    "Following on Instagram: ⏳ being checked",
+  );
+  verified = true;
+  await expect(
+    wizard.getByRole("heading", { name: "Get your gift from the store!" }),
+  ).toBeVisible({ timeout: 20_000 });
+  await expect(wizard).toContainText("Power Bank");
+  const kinds = events.map((e) => e.kind);
+  for (const k of ["posted_instagram", "gift_unlocked"])
+    expect(kinds).toContain(k);
+});
+
+test("the studio renders no poster when all mirrors are hidden", async ({ page }) => {
+  await page.route("**/api/mirrors/version/", (route) =>
+    route.fulfill({ json: { version: "empty-catalog" } }),
+  );
+  await page.route("**/api/mirrors/", (route) => route.fulfill({ json: [] }));
+  await page.goto("/?spin=test-token");
+  await expect(page.getByRole("heading", { name: "Mirror studio unavailable" })).toBeVisible();
+  await expect(page.getByRole("img", { name: /poster preview/ })).toHaveCount(0);
+});
+
+test("the manager page displays animated Deepam lamps", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: "Customer details" })).toBeVisible();
+  await expect(page.locator(".deepam-lamp")).toHaveCount(5);
+  await expect(page.locator(".phone-fireworks")).toHaveCount(0);
+  expect(await page.locator(".deepam-lamp").first().evaluate(
+    (lamp) => getComputedStyle(lamp, "::before").animationName,
+  )).toBe("deepam-flicker");
 });

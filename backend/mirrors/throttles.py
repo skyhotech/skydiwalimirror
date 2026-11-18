@@ -1,3 +1,5 @@
+import hashlib
+import json
 import re
 
 from rest_framework.settings import api_settings
@@ -19,8 +21,21 @@ def client_ip(request):
     return request.META.get("REMOTE_ADDR", "")
 
 
+def device_ident(request):
+    """IP plus a short hash of the browser's User-Agent.
+
+    A store's phones share one Wi-Fi IP; counting per device stops one busy
+    store from using up a single shared limit. NetworkCeilingThrottle keeps an
+    overall per-IP cap so changing the User-Agent can't lift the limits."""
+    ua = request.META.get("HTTP_USER_AGENT", "")
+    return f"{client_ip(request)}|{hashlib.sha1(ua.encode()).hexdigest()[:10]}"
+
+
 class ScopedIPThrottle(SimpleRateThrottle):
-    """Per-IP throttle that also understands multi-unit periods like ``1/5s``."""
+    """Per-device throttle that also understands multi-unit periods like ``1/5s``."""
+
+    def get_ident(self, request):
+        return device_ident(request)
 
     def get_cache_key(self, request, view):
         return self.cache_format % {"scope": self.scope, "ident": self.get_ident(request)}
@@ -53,23 +68,64 @@ class CustomerRegisterThrottle(ScopedIPThrottle):
 
 
 class CustomerSpinThrottle(ScopedIPThrottle):
+    """Spins stay counted per network (a store shares one Wi-Fi address)."""
+
     scope = "customer_spin"
 
+    def get_ident(self, request):
+        return client_ip(request)
 
-class PhoneThrottle(ScopedIPThrottle):
-    """Limits by mobile number instead of IP, so one number can't be hammered
-    from many networks."""
 
-    scope = "customer_phone"
+class ManagerThrottle(ScopedIPThrottle):
+    scope = "manager"
+
+
+class RepeatThrottle(ScopedIPThrottle):
+    """Exactly the same change can't be sent twice within a few seconds: a
+    double tap or a resent form is refused. Different requests (another card,
+    another field value) are never blocked by each other. Reads are never
+    limited."""
+
+    scope = "repeat"
+
+    @staticmethod
+    def fingerprint(data):
+        """Hash of the whole request body; uploads count by name and size."""
+        if not hasattr(data, "items"):
+            return hashlib.sha1(repr(data).encode()).hexdigest()
+        parts = []
+        for key in sorted(data.keys()):
+            values = data.getlist(key) if hasattr(data, "getlist") else [data[key]]
+            for v in values:
+                if hasattr(v, "read"):
+                    v = f"file:{getattr(v, 'name', '')}:{getattr(v, 'size', '')}"
+                elif not isinstance(v, str):
+                    v = json.dumps(v, sort_keys=True, default=str)
+                parts.append(f"{key}={v}")
+        return hashlib.sha1("&".join(parts).encode()).hexdigest()
 
     def get_cache_key(self, request, view):
-        phone = str(request.data.get("phone", ""))[:20]
-        if not phone:
+        if request.method in ("GET", "HEAD", "OPTIONS"):
             return None
-        return self.cache_format % {"scope": self.scope, "ident": phone}
+        try:
+            data = request.data
+        except Exception:
+            data = {}
+        subject = self.fingerprint(data)
+        ident = f"{self.get_ident(request)}|{request.method}|{request.path}|{subject}"
+        return self.cache_format % {"scope": self.scope, "ident": ident}
 
 
 class BurstThrottle(ScopedIPThrottle):
     """Overall per-IP ceiling for every API endpoint."""
 
     scope = "burst"
+
+
+class NetworkCeilingThrottle(ScopedIPThrottle):
+    """Safety net per IP (all devices on one network together)."""
+
+    scope = "network"
+
+    def get_ident(self, request):
+        return client_ip(request)

@@ -1,9 +1,17 @@
 # SKY Diwali API on the Ubuntu VPS, installed as /etc/caddy/Caddyfile.
-# The frontend is on Vercel; this serves only the API, dashboard and media.
-# Let's Encrypt issues short-lived (about 6 day) certificates for bare IP
-# addresses; Caddy renews them on its own. sslip.io is a fallback hostname
-# that resolves to the same IP.
+# Needs Caddy 2.10+ for the Let's Encrypt short-lived IP certificate.
+# Serves the studio, API, dashboard and media from one site.
 {
+	default_sni 87.232.72.141
+	log default {
+		format filter {
+			wrap json
+			fields {
+				request>uri delete
+				request>headers>Referer delete
+			}
+		}
+	}
 	servers {
 		timeouts {
 			read_body 60s
@@ -24,7 +32,13 @@
 			roll_size 10MiB
 			roll_keep 5
 		}
-		format json
+		format filter {
+			wrap json
+			fields {
+				request>uri delete
+				request>headers>Referer delete
+			}
+		}
 	}
 	header {
 		Strict-Transport-Security "max-age=31536000"
@@ -48,20 +62,42 @@
 	# Uploads are served straight from disk, images only: anything else under
 	# /media is refused so an uploaded file can never run as a page.
 	@media_image path_regexp media_image (?i)^/media/.+\.(jpe?g|png|webp)$
-	handle @media_image {
-		root * /var/lib/skymirror
-		# Uploaded files get unique names, so browsers and Vercel's CDN may keep
-		# them for good: each image leaves this server about once.
-		header Cache-Control "public, max-age=31536000, s-maxage=31536000, immutable"
-		header Access-Control-Allow-Origin *
-		header Cross-Origin-Resource-Policy cross-origin
-		header Content-Security-Policy "default-src 'none'; sandbox"
+	handle /media/* {
+		# route preserves this security-sensitive order; ordinary handles with
+		# path matchers would otherwise sort before the named image matcher.
+		route {
+			handle /media/customers/* {
+				reverse_proxy 127.0.0.1:8000
+			}
+			handle @media_image {
+				root * /var/lib/skymirror
+				header Cache-Control "public, max-age=31536000, s-maxage=31536000, immutable"
+				header Access-Control-Allow-Origin *
+				header Cross-Origin-Resource-Policy cross-origin
+				header Content-Security-Policy "default-src 'none'; sandbox"
+				file_server
+			}
+			handle {
+				respond 404
+			}
+		}
+	}
+	@backend path /api/* /sky/*
+	handle @backend {
+		reverse_proxy 127.0.0.1:8000
+	}
+	# A missing code file must fail as such, not come back as a page.
+	handle /assets/* {
+		root * /opt/skymirror/web
+		header Cache-Control "public, max-age=31536000, immutable"
 		file_server
 	}
-	handle /media/* {
-		respond 404
-	}
 	handle {
-		reverse_proxy 127.0.0.1:8000
+		root * /opt/skymirror/web
+		# Pages always ask for the newest build; hashed code files never change.
+		@page not path /assets/*
+		header @page Cache-Control "no-cache"
+		try_files {path} /index.html
+		file_server
 	}
 }
