@@ -366,8 +366,8 @@ export function ManagerIntake() {
             min: 1,
             step: "0.01",
           })}
-          <label htmlFor="m-branch">Branch</label>
-          <div className="manager-branch">
+          {!BRANCH && <label htmlFor="m-branch">Branch</label>}
+          <div className="manager-branch" style={BRANCH ? { display: "none" } : undefined}>
             <input
               id="m-branch"
               className="manager-input"
