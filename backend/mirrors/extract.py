@@ -6,6 +6,7 @@ import io
 import re
 import shutil
 import math
+from contextlib import ExitStack
 
 from PIL import Image, ImageFilter, ImageOps
 
@@ -194,6 +195,50 @@ def invoice_preview(data):
         raise UnreadableInvoice("A preview could not be made from this invoice.") from exc
     raise UnreadableInvoice("The invoice preview could not be compressed below 200 KB.")
 
+
+
+def invoice_pdf(data):
+    """Create an inert, size-limited PDF with every uploaded page."""
+    try:
+        with ExitStack() as stack:
+            if data.startswith(b"%PDF-"):
+                import pypdfium2 as pdfium
+
+                document = pdfium.PdfDocument(data)
+                stack.callback(document.close)
+                if not 1 <= len(document) <= 8:
+                    raise UnreadableInvoice("Upload an invoice PDF with one to eight pages.")
+                pages = []
+                for index in range(len(document)):
+                    page = document[index]
+                    try:
+                        width, height = page.get_size()
+                        if width <= 0 or height <= 0 or not math.isfinite(width * height):
+                            raise UnreadableInvoice("The invoice page has invalid dimensions.")
+                        bitmap = page.render(scale=min(150 / 72, 1600 / max(width, height)))
+                        try:
+                            pages.append(stack.enter_context(bitmap.to_pil().convert("L")))
+                        finally:
+                            bitmap.close()
+                    finally:
+                        page.close()
+            else:
+                image = stack.enter_context(Image.open(io.BytesIO(data)))
+                if image.width * image.height > 25_000_000:
+                    raise UnreadableInvoice("Invoice dimensions are too large.")
+                pages = [stack.enter_context(ImageOps.exif_transpose(image).convert("L"))]
+            for bounds, quality in ((1600, 82), (1350, 72), (1150, 60), (950, 50), (800, 42)):
+                for page in pages:
+                    page.thumbnail((bounds, bounds), Image.Resampling.LANCZOS)
+                with io.BytesIO() as output:
+                    pages[0].save(output, "PDF", save_all=True, append_images=pages[1:], quality=quality)
+                    if output.tell() < INVOICE_PROOF_LIMIT:
+                        return output.getvalue()
+    except UnreadableInvoice:
+        raise
+    except Exception as exc:
+        raise UnreadableInvoice("A PDF could not be made from this invoice.") from exc
+    raise UnreadableInvoice("This invoice could not fit under 200 KB. Upload a clearer PDF.")
 
 _PREFIX = re.compile(r"^(?:S[1Il|!]|5[Il|!1]|5I)(?=\d{4})")
 

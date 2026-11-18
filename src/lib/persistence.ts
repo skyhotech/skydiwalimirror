@@ -47,10 +47,10 @@ function database() {
     });
   return dbPromise;
 }
-async function read(): Promise<Draft | undefined> {
+async function read(key: string): Promise<Draft | undefined> {
   const db = await database();
   return new Promise((resolve, reject) => {
-    const req = db.transaction("drafts").objectStore("drafts").get(KEY);
+    const req = db.transaction("drafts").objectStore("drafts").get(key);
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
   });
@@ -60,13 +60,13 @@ function photo(p: Photo | null): StoredPhoto | null {
     ? { id: p.id, blob: p.blob, adjust: p.adjust, label: p.label }
     : null;
 }
-async function save(draft: Draft) {
+async function save(draft: Draft, key: string) {
   const db = await database();
   await new Promise<void>((resolve, reject) => {
     const tx = db.transaction("drafts", "readwrite"),
       store = tx.objectStore("drafts");
-    if (!draft.selfie && !draft.products.length) store.delete(KEY);
-    else store.put(draft, KEY);
+    if (!draft.selfie && !draft.products.length) store.delete(key);
+    else store.put(draft, key);
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
     tx.onabort = () => reject(tx.error);
@@ -91,11 +91,12 @@ async function restore(p: StoredPhoto | null): Promise<Photo | null> {
     label: typeof p.label === "string" ? p.label : "",
   };
 }
-export function initializePhotoStorage(): Promise<void> {
+export function initializePhotoStorage(ownerToken?: string): Promise<void> {
   if (startup) return startup;
+  const key = ownerToken ? `link:${ownerToken}` : KEY;
   startup = (async () => {
     try {
-      const draft = await read();
+      const draft = await read(key);
       if (draft?.version === 1) {
         const allocated: Photo[] = [];
         try {
@@ -158,7 +159,7 @@ export function initializePhotoStorage(): Promise<void> {
       };
       message("Saving photos on this device…");
       queue = queue
-        .then(() => save(draft))
+        .then(() => save(draft, key))
         .catch(() => {
           message(
             "Photos could not be saved. Storage may be full or disabled; download your poster.",

@@ -21,7 +21,7 @@ test("the manager form fills a PDF and sends the corrected values", async ({ pag
     "Grand Total 24,999.00",
   ];
   await page.route("**/api/manager/branches/", (route) => route.fulfill({
-    json: [{ slug: "ranipet-2", name: "RANIPET-2", phone: "8667670649" }],
+    json: [],
   }));
   await page.route("**/api/manager/scan/", (route) => {
     expect(route.request().postData()).toContain('filename="counter-21003.pdf"');
@@ -32,7 +32,7 @@ test("the manager form fills a PDF and sends the corrected values", async ({ pag
   await page.route("**/api/manager/check/", async (route) => {
     const body = route.request().postData() ?? "";
     expect(body).toContain("invoice-scan-token");
-    expect(body).toContain("ranipet-2");
+    expect(body).not.toContain('name="branch"');
     expect(body).toMatch(/name="bill_value"\r\n\r\n50000\r\n/);
     return route.fulfill({ json: { link: "https://studio.example/?spin=test" } });
   });
@@ -64,6 +64,10 @@ test("the manager form fills a PDF and sends the corrected values", async ({ pag
   await expect(page.getByLabel("Bill value (₹)")).toHaveValue("24999");
   await expect(page.getByRole("combobox", { name: "Branch" })).toHaveCount(0);
 
+  await page.getByLabel("Mail ID (optional)").fill("invalid-email");
+  await page.getByRole("button", { name: "Check", exact: true }).click();
+  await expect(page.getByRole("alert")).toContainText("Enter a valid mail ID or leave it blank.");
+  await page.getByLabel("Mail ID (optional)").fill("asha@example.test");
   await page.getByLabel("Bill value (₹)").fill("50000");
   await page.getByRole("button", { name: "Check", exact: true }).click();
   const tracked = page.waitForRequest("**/api/manager/sent/");

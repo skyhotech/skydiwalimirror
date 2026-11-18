@@ -10,6 +10,7 @@ from django.test import TestCase, TransactionTestCase, override_settings
 from unittest import skipUnless
 
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
+from pypdf import PdfReader, PdfWriter
 
 from .extract import ocr_available
 
@@ -294,24 +295,55 @@ class BranchFlowTests(TestCase):
         self.assertIn("no-store", response.headers["Cache-Control"])
 
     @override_settings(MATCH_INVOICE_DETAILS=False)
-    def test_submitted_corrections_are_saved_while_matching_is_paused(self):
-        pdf = SimpleUploadedFile(
-            "bill.pdf", text_pdf(bill_text("9845011111", IMEI)), "application/pdf"
-        )
-        scan = self.client.post("/api/manager/scan/", {"invoice": pdf})
-        self.assertEqual(scan.status_code, 200)
-        response = self.client.post("/api/manager/check/", {
-            "name": "Corrected Name", "phone": "9845011111",
-            "product_details": "Corrected product", "invoice_number": "CORRECTED001",
-            "bill_value": "50000.00", "branch": "anna-nagar", "blur_score": 200,
-            "scan": scan.json()["scan"],
+    def test_submitted_corrections_without_a_branch_save_the_complete_invoice_pdf(self):
+        writer = PdfWriter()
+        writer.append(io.BytesIO(text_pdf(bill_text("9845011111", IMEI))))
+        writer.add_blank_page(width=612, height=792)
+        pdf = io.BytesIO()
+        writer.write(pdf)
+        scan = self.client.post("/api/manager/scan/", {
+            "invoice": SimpleUploadedFile("two-page-invoice.pdf", pdf.getvalue(), "application/pdf")
         })
+        self.assertEqual(scan.status_code, 200, scan.data)
+        data = {
+            "name": "Corrected Name", "phone": "9845011111", "email": "asha@example.test",
+            "product_details": "Corrected product", "invoice_number": "CORRECTED001",
+            "bill_value": "50000.00", "blur_score": 200, "scan": scan.json()["scan"],
+        }
+        invalid = self.client.post("/api/manager/check/", {**data, "email": "invalid-email"})
+        self.assertEqual(invalid.status_code, 400)
+        self.assertIn("email", invalid.data)
+        self.assertFalse(InvoiceSubmission.objects.exists())
+        response = self.client.post("/api/manager/check/", data)
         self.assertEqual(response.status_code, 200, response.data)
         customer = Customer.objects.get(phone="9845011111")
         self.assertEqual(customer.invoice_number, "CORRECTED001")
         self.assertIsNone(customer.imei)
+        self.assertIsNone(customer.branch)
         self.assertEqual(customer.bill_value, 50000)
         self.assertLess(customer.invoice_image.size, 200_000)
+
+        url = f"/api/admin/customers/{customer.pk}/invoice-pdf/"
+        self.assertEqual(self.client.get(url).status_code, 403)
+        self.client.force_login(self.staff)
+        response = self.client.get(url)
+        self.addCleanup(response.close)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers["Content-Type"], "application/pdf")
+        self.assertIn("no-store", response.headers["Cache-Control"])
+        self.assertIn("inline", response.headers["Content-Disposition"])
+        document = b"".join(response.streaming_content)
+        self.assertLess(len(document), 200_000)
+        self.assertEqual(len(PdfReader(io.BytesIO(document)).pages), 2)
+
+        pdf_path = customer.invoice_image.name.removesuffix(".jpg") + ".pdf"
+        storage = customer.invoice_image.storage
+        self.assertTrue(storage.exists(pdf_path))
+        with self.captureOnCommitCallbacks(execute=True):
+            deleted = self.client.delete(f"/api/admin/customers/{customer.pk}/")
+        self.assertEqual(deleted.status_code, 204)
+        self.assertFalse(storage.exists(pdf_path))
+        self.assertEqual(InvoiceSubmission.objects.count(), 1)
 
     @override_settings(MATCH_INVOICE_DETAILS=False)
     def test_invoice_filename_is_reserved_only_after_successful_check(self):
@@ -329,7 +361,7 @@ class BranchFlowTests(TestCase):
             "blur_score": 200,
         }
         rejected = self.client.post("/api/manager/check/", {
-            **data, "scan": scanned[0], "branch": "invalid-store",
+            **data, "scan": scanned[0], "email": "invalid-email",
         })
         self.assertEqual(rejected.status_code, 400)
         self.assertFalse(InvoiceSubmission.objects.exists())
@@ -368,6 +400,17 @@ class BranchFlowTests(TestCase):
             self.assertEqual(response.headers["Content-Type"], "image/jpeg")
             self.assertIn("no-store", response.headers["Cache-Control"])
             self.assertTrue(b"".join(response.streaming_content).startswith(b"\xff\xd8"))
+
+    def test_legacy_invoice_preview_can_be_opened_as_a_one_page_pdf(self):
+        customer = Customer.objects.create(session="legacy-invoice")
+        customer.invoice_image.save("legacy.jpg", jpeg("legacy.jpg"))
+        self.client.force_login(self.staff)
+        response = self.client.get(f"/api/admin/customers/{customer.pk}/invoice-pdf/")
+        self.addCleanup(response.close)
+        self.assertEqual(response.status_code, 200)
+        document = b"".join(response.streaming_content)
+        self.assertLess(len(document), 200_000)
+        self.assertEqual(len(PdfReader(io.BytesIO(document)).pages), 1)
 
     def test_customer_period_filters_use_indian_calendar_dates(self):
         day = datetime(2026, 11, 18, 18, 30, tzinfo=utc.utc)  # Nov 19 starts in India
@@ -615,6 +658,61 @@ class BranchFlowTests(TestCase):
         self.assertIn("IMEI", data["ocr_text"])
         funnel = self.client.get("/api/admin/stats/").json()["funnel"]
         self.assertEqual((funnel["spun"], funnel["shared"]), (1, 1))
+
+    def test_reviewed_link_records_repeated_shares_and_screenshot_evidence(self):
+        token = self.token(self.check())
+        self.client.post("/api/manager/sent/", {"phone": "9845011111"})
+        link_url = f"/api/customers/link/{token}/"
+        self.assertEqual(self.client.get(link_url).json()["next"], "terms")
+        self.assertEqual(self.client.get(link_url).status_code, 200)
+        self.assertEqual(self.spin(token).status_code, 200)
+        self.assertEqual(self.client.post("/api/customers/review/", {"token": token, "rating": 5}).status_code, 200)
+        upload = self.client.post("/api/customers/", {
+            "phone": "9845011111", "token": token, "session": "link-journey",
+            "poster": jpeg("poster.jpg"), "selfie": jpeg("selfie.jpg"),
+        })
+        self.assertEqual(upload.status_code, 200, upload.data)
+        profile = self.client.post("/api/customers/profile/", {
+            "token": token, "platform": "instagram", "handle": "test.user",
+        })
+        self.assertEqual(profile.status_code, 200, profile.data)
+
+        def action(kind):
+            event = self.client.post("/api/customers/event/", {"token": token, "kind": kind})
+            self.assertEqual(event.status_code, 200, event.data)
+
+        def screenshot(platform):
+            proof = self.client.post(f"/api/customers/{platform}-proof/", {
+                "token": token, "screenshot": jpeg("proof.jpg"),
+            })
+            self.assertEqual(proof.status_code, 200, proof.data)
+
+        for kind in ("share_opened_whatsapp", "shared_whatsapp", "returned_whatsapp"):
+            action(kind)
+        screenshot("whatsapp")
+        for kind in ("share_opened_whatsapp", "shared_whatsapp", "returned_whatsapp", "share_opened_more"):
+            action(kind)
+        screenshot("more")
+        for kind in ("share_opened_more", "share_opened_instagram", "shared_instagram", "returned_instagram"):
+            action(kind)
+        screenshot("instagram")
+        returned = self.client.get(link_url).json()
+        self.assertEqual(returned["next"], "share")
+        self.assertTrue(returned["instagram_profile_saved"])
+        self.assertEqual(self.client.get(link_url).status_code, 200)
+
+        self.client.force_login(self.staff)
+        customer = Customer.objects.get(phone="9845011111")
+        details = self.client.get(f"/api/admin/customers/{customer.pk}/").json()
+        self.assertEqual([event["kind"] for event in details["events"]], [
+            "checked", "whatsapp_sent", "link_opened", "link_opened", "terms_accepted",
+            "spun", "reviewed", "poster_saved", "profile_instagram",
+            "share_opened_whatsapp", "shared_whatsapp", "returned_whatsapp", "posted_whatsapp",
+            "share_opened_whatsapp", "shared_whatsapp", "returned_whatsapp",
+            "share_opened_more", "more_proof_sent", "share_opened_more",
+            "share_opened_instagram", "shared_instagram", "returned_instagram", "instagram_proof_sent",
+            "link_opened", "link_opened",
+        ])
 
     def test_imei_is_found_when_a_scan_garbles_its_label(self):
         text = (f"Invoice No : SI2627A14813\nBilled To,\nAsha\nPh: 9845011111\n"

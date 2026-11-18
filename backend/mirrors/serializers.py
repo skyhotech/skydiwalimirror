@@ -557,7 +557,7 @@ class CustomerIntakeSerializer(serializers.Serializer):
         max_digits=10, decimal_places=2, min_value=MIN_BILL,
         error_messages={"min_value": BELOW_MIN_BILL},
     )
-    branch = serializers.CharField(max_length=60)
+    branch = serializers.CharField(max_length=60, required=False, allow_blank=True, default="")
     # The invoice as Django itself read it (see ManagerScan): never text
     # sent from the phone.
     scan = serializers.CharField(
@@ -581,9 +581,12 @@ class CustomerIntakeSerializer(serializers.Serializer):
             )
         data["ocr_text"] = text
         data.setdefault("imei", "")
-        preview = cache.get(f"invoice-preview:{data['scan']}")
+        files = cache.get(f"invoice-files:{data['scan']}")
+        preview, invoice_pdf = files or (cache.get(f"invoice-preview:{data['scan']}"), None)
         if preview:
             data["invoice_preview"] = preview
+        if invoice_pdf:
+            data["invoice_pdf"] = invoice_pdf
 
         # Keep autofill and proof storage active while invoice matching is paused.
         if not getattr(settings, "MATCH_INVOICE_DETAILS", False):

@@ -337,6 +337,9 @@
     aside a { padding: 8px 7px; font-size: 12.5px; }
     aside form button { padding: 6px 8px; font-size: 12px; }
   }
+  .customer-journey { margin:8px 0 16px; padding-inline-start:24px; }
+  .customer-journey li { padding-block:5px; }
+  .customer-journey time { display:block; color:var(--muted); font-size:12px; }
 </style>
 </head>
 <body>
@@ -1498,23 +1501,31 @@
     paginate(list);
   }
   const EVENTS = { ...FUNNEL, follow_opened: "Opened our Instagram to follow", follow_proof_sent: "Uploaded Instagram follow screenshot", follow_verified: "Instagram follow verified", follow_rejected: "Instagram follow rejected", whatsapp_verified: "WhatsApp Status verified", whatsapp_rejected: "WhatsApp Status rejected", google_review_opened: "Opened the Google review page", share_opened_instagram: "Opened Instagram", share_opened_facebook: "Opened Facebook", share_opened_whatsapp: "Opened WhatsApp", share_opened_more: "Opened share sheet", posted_instagram: "Posted on Instagram (link checked)", posted_whatsapp: "Posted on WhatsApp Status (confirmed)", gift_unlocked: "🎁 Gift unlocked — collect at store", posted_facebook: "Posted on Facebook (link)", profile_instagram: "Gave Instagram ID", profile_facebook: "Gave Facebook profile", terms_accepted: "Terms accepted", reviewed: "Rated the visit", checked: "Purchase checked", whatsapp_sent: "WhatsApp link sent", link_opened: "Link opened", poster_saved: "Poster made", shared_instagram: "Shared: Instagram", shared_facebook: "Shared: Facebook", shared_whatsapp: "Shared: WhatsApp", shared_more: "Shared: other" };
-  // The journey as a railway: a train runs down the line, lighting each station
-  // as it arrives. Repeats of a step (two opens) share one station.
-  const STATION_MS = 550;
+  Object.assign(EVENTS, {
+    spun: "Wheel spins",
+    returned_whatsapp: "Came back after WhatsApp",
+    returned_instagram: "Came back after Instagram",
+    returned_facebook: "Came back after Facebook",
+    instagram_proof_sent: "Uploaded Instagram post screenshot",
+    more_proof_sent: "Uploaded a share screenshot (other app)",
+  });
+  const journeyDate = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Kolkata", day: "numeric", month: "short", year: "numeric",
+    hour: "numeric", minute: "2-digit", hour12: true,
+  });
   function journeyTrack(events) {
-    const stops = [];
-    for (const e of events) {
-      const last = stops[stops.length - 1];
-      if (last && last.kind === e.kind) last.times++;
-      else stops.push({ kind: e.kind, at: e.created_at, times: 1 });
+    const entries = [];
+    for (const event of [...events].sort((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at) || a.id - b.id)) {
+      const date = journeyDate.format(new Date(event.created_at));
+      const previous = entries.at(-1);
+      if (event.kind === "link_opened" && previous?.kind === event.kind && previous.date === date) {
+        previous.count += 1;
+      } else {
+        entries.push({ kind: event.kind, date, timestamp: event.created_at, count: 1 });
+      }
     }
-    if (!stops.length) return `<p class="hint">No steps yet.</p>`;
-    const ride = stops.length * STATION_MS;
-    return `<ol class="track" style="--ride:${ride}ms;--stops:${stops.length}">
-      <span class="track-train" aria-hidden="true">🚆</span>
-      ${stops.map((st, i) => `<li style="animation-delay:${i * STATION_MS}ms"><i></i><div><b>${esc(EVENTS[st.kind] || st.kind)}${st.times > 1 ? ` <small>×${st.times}</small>` : ""}</b>
-        <span>${new Date(st.at).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" })}</span></div></li>`).join("")}
-    </ol>`;
+    if (!entries.length) return `<p class="hint">No steps yet.</p>`;
+    return `<ol class="customer-journey">${entries.map((entry) => `<li><b>${esc(EVENTS[entry.kind] || entry.kind)}${entry.count > 1 ? ` ×${entry.count}` : ""}</b> <time datetime="${esc(entry.timestamp)}">${esc(entry.date)}</time></li>`).join("")}</ol>`;
   }
   async function customerDetail(id) {
     const c = await api(`customers/${id}/`);
@@ -1526,6 +1537,7 @@
       <table>${row("Phone", c.phone)}${row("Mail", c.email)}${row("Branch", c.branch_name)}${row("Product", c.product_details)}${row("IMEI", c.imei)}${row("Invoice no.", c.invoice_number)}${row("Bill value", c.bill_value)}${row("Reward", c.reward)}${row("Rating", c.rating ? c.rating + " / 5" : "")}${row("Terms accepted", c.terms_accepted_at ? new Date(c.terms_accepted_at).toLocaleString() : "Not yet")}${row("Video review", c.video_review ? "Yes, will make one" : "No")}${row("Instagram", c.instagram_id ? "@" + c.instagram_id : "")}${row("Reward checks", c.progress ? `Post link ${c.progress.instagram_post ? "✓" : "✕"} · Follow ${c.progress.instagram_follow || "✕"} · WhatsApp ${c.progress.whatsapp_status || "✕"} · Google review ${c.progress.google_review_opened ? "opened" : "—"}${c.progress.ready ? " → 🎁 ready" : ""}` : "")}${row("Facebook", c.facebook_profile)}${row("Review", c.review)}${row("Mirror", c.mirror_name)}${row("Photo sharpness", c.blur_score)}${row("Link", c.link)}${row("Link version", c.link_version)}</table>
       <div class="row" style="flex-wrap:wrap;gap:8px;margin:12px 0">${pics.map(([n, u]) => `<a href="${esc(u)}" target="_blank" rel="noopener"><img src="${esc(u)}" alt="${n}" style="height:160px;border-radius:8px"></a>`).join("")}</div>
       ${c.posts && c.posts.length ? `<b>Posts (proof submitted)</b><ul>${c.posts.map((p) => `<li>${esc(p.platform)}: <a href="${esc(p.url)}" target="_blank" rel="noopener">${esc(p.url)}</a></li>`).join("")}</ul>` : ""}
+      ${c.invoice_image ? `<p><a class="btn" href="/api/admin/customers/${c.id}/invoice-pdf/" target="_blank" rel="noopener">View PDF</a></p>` : ""}
       <b>Journey</b>${journeyTrack(c.events)}
       <details><summary>Text read from invoice</summary><pre style="white-space:pre-wrap">${esc(c.ocr_text)}</pre></details>`;
     $("button", d).addEventListener("click", () => d.close());

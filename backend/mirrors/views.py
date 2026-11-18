@@ -1,4 +1,5 @@
 import hashlib
+import io
 import json
 import secrets
 import threading
@@ -27,7 +28,7 @@ from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.permissions import AllowAny, IsAdminUser
-from rest_framework.exceptions import APIException, ValidationError
+from rest_framework.exceptions import APIException, NotFound, ValidationError
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -347,8 +348,9 @@ class CustomerUpload(APIView):
                 customer.selfie_thumb = thumbs["selfie_thumb"]
             customer.mirror = mirror
             customer.mirror_name = mirror.name if mirror else data.get("mirror", "")
-            _file_under(customer, branch)
-            if data.get("name"):
+            if not data.get("token"):
+                _file_under(customer, branch)
+            if data.get("name") and not data.get("token"):
                 customer.name = data["name"]
             customer.save()
             # Only once the new files are committed are the old ones removed.
@@ -391,8 +393,9 @@ class CustomerLink(APIView):
             "next": customer.next_step,
             "video_review": customer.video_review,
             "instagram_id": customer.instagram_id,
+            "instagram_profile_saved": bool(customer.instagram_id and customer.events.filter(kind="profile_instagram").exists()),
             "poster": customer.poster.url if customer.poster else None,
-        })
+        }, headers={"Cache-Control": "private, no-store"})
 
 
 class CustomerSpin(APIView):
@@ -451,10 +454,16 @@ def invoice_filename_key(filename):
     return hashlib.sha256(name.encode("utf-8")).hexdigest()
 
 
+def _paired_invoice_pdf(image_name):
+    if re.fullmatch(r"customers/invoice-[a-f0-9]{32}\.jpg", image_name or ""):
+        return image_name.removesuffix(".jpg") + ".pdf"
+    return None
+
+
 def _save_purchase(data, branch, **log):
     """Files a checked purchase (by the manager's check or an admin's
     approval) and gives it a spin link."""
-    uploaded_invoice = None
+    uploaded_files = []
     try:
         with transaction.atomic():
             filename_key = data.get("invoice_filename_key")
@@ -468,7 +477,7 @@ def _save_purchase(data, branch, **log):
             others = Customer.objects.exclude(pk=customer.pk if customer else None)
             if data["imei"] and others.filter(imei=data["imei"]).exists():
                 raise ValidationError({"imei": ["This IMEI is already registered."]})
-            if others.filter(branch=branch, invoice_number=data["invoice_number"]).exists():
+            if branch and others.filter(branch=branch, invoice_number=data["invoice_number"]).exists():
                 raise ValidationError(
                     {"invoice_number": ["This invoice is already registered at this branch."]}
                 )
@@ -482,7 +491,7 @@ def _save_purchase(data, branch, **log):
                 customer.invoice_number, customer.bill_value, customer.branch_id,
             ) != (
                 data["name"], data.get("email", ""), data["product_details"], data["imei"],
-                data["invoice_number"], data["bill_value"], branch.pk,
+                data["invoice_number"], data["bill_value"], branch.pk if branch else None,
             )
             customer.name = data["name"]
             customer.email = data.get("email", "")
@@ -490,7 +499,7 @@ def _save_purchase(data, branch, **log):
             customer.imei = data["imei"]
             customer.invoice_number = data["invoice_number"]
             customer.bill_value = data["bill_value"]
-            customer.branch, customer.branch_name = branch, branch.name
+            customer.branch, customer.branch_name = branch, branch.name if branch else ""
             customer.consent_at = customer.consent_at or timezone.now()
             customer.ocr_text = data["ocr_text"]
             customer.blur_score = data["blur_score"]
@@ -502,16 +511,24 @@ def _save_purchase(data, branch, **log):
             if preview:
                 storage = customer.invoice_image.storage
                 name = storage.save(f"customers/invoice-{uuid4().hex}.jpg", ContentFile(preview))
-                uploaded_invoice = (storage, name)
+                uploaded_files.append((storage, name))
                 customer.invoice_image = name
+                if data.get("invoice_pdf"):
+                    pdf_name = _paired_invoice_pdf(name)
+                    written = storage.save(pdf_name, ContentFile(data["invoice_pdf"]))
+                    uploaded_files.append((storage, written))
+                    if written != pdf_name:
+                        raise RuntimeError("The invoice PDF could not be paired with its preview.")
             customer.save()
             if preview and previous_invoice and previous_invoice != customer.invoice_image.name:
                 storage = customer.invoice_image.storage
                 transaction.on_commit(lambda: storage.delete(previous_invoice), robust=True)
+                previous_pdf = _paired_invoice_pdf(previous_invoice)
+                if previous_pdf:
+                    transaction.on_commit(lambda: storage.delete(previous_pdf), robust=True)
             _log(customer, "checked", version=customer.link_version, link_changed=changed, **log)
     except Exception as exc:
-        if uploaded_invoice:
-            storage, name = uploaded_invoice
+        for storage, name in uploaded_files:
             storage.delete(name)
         if isinstance(exc, IntegrityError):
             # Two counters submitted the same purchase at the same moment.
@@ -556,7 +573,8 @@ class ManagerCheck(APIView):
         data["invoice_filename_key"] = cache.get(f"invoice-filename:{data['scan']}")
         if data["scan"].startswith("f1_") and not data["invoice_filename_key"]:
             raise ValidationError({"invoice_image": ["Please upload the invoice again."]})
-        customer = _save_purchase(data, _branch(data["branch"]))
+        branch = Branch.objects.filter(slug=data["branch"], is_active=True).first() if data["branch"] else None
+        customer = _save_purchase(data, branch)
         return Response({"phone": customer.phone, "link": spin_link(customer.spin_token)})
 
 
@@ -575,7 +593,7 @@ class ManagerScan(APIView):
     parser_classes = [MultiPartParser, FormParser]
 
     def post(self, request):
-        from .extract import MAX_BYTES, UnreadableInvoice, extract_text, invoice_preview
+        from .extract import MAX_BYTES, UnreadableInvoice, extract_text, invoice_pdf, invoice_preview
 
         upload = request.FILES.get("invoice")
         if upload is None:
@@ -595,9 +613,10 @@ class ManagerScan(APIView):
             text = extract_text(raw, upload.name)
             from .serializers import NOT_AN_INVOICE, looks_like_invoice
 
-            if not looks_like_invoice(text):
+            if getattr(settings, "MATCH_INVOICE_DETAILS", False) and not looks_like_invoice(text):
                 raise UnreadableInvoice(NOT_AN_INVOICE)
             preview = invoice_preview(raw)
+            pdf = invoice_pdf(raw) if raw.startswith(b"%PDF-") else None
         except UnreadableInvoice as exc:
             return Response({"invoice": [str(exc)]}, status=400)
         finally:
@@ -605,7 +624,7 @@ class ManagerScan(APIView):
         scan = "f1_" + secrets.token_urlsafe(16)
         cache.set_many({
             f"invoice-scan:{scan}": text,
-            f"invoice-preview:{scan}": preview,
+            f"invoice-files:{scan}": (preview, pdf),
             f"invoice-filename:{scan}": filename_key,
         }, SCAN_SECONDS)
         return Response(
@@ -739,7 +758,7 @@ class CustomerEventView(APIView):
 
     authentication_classes = []
     permission_classes = [AllowAny]
-    throttle_classes = [CustomerSpinThrottle, RepeatThrottle]
+    throttle_classes = [CustomerSpinThrottle]
 
     def post(self, request):
         ser = EventSerializer(data=request.data)
@@ -758,8 +777,12 @@ class CustomerEventView(APIView):
         return Response({"ok": True})
 
 
-PROOFS = {"whatsapp": ("whatsapp_proof", "whatsapp_proof_status", "posted_whatsapp"),
-          "follow": ("follow_proof", "follow_proof_status", "follow_proof_sent")}
+PROOFS = {
+    "whatsapp": ("whatsapp_proof", "whatsapp_proof_status", "posted_whatsapp"),
+    "follow": ("follow_proof", "follow_proof_status", "follow_proof_sent"),
+    "instagram": ("instagram_proof", "instagram_proof_status", "instagram_proof_sent"),
+    "more": ("more_proof", "more_proof_status", "more_proof_sent"),
+}
 
 
 class CustomerProof(APIView):
@@ -981,11 +1004,43 @@ class CustomerViewSet(
             )
         return qs.filter(**_customer_date_bounds(self.request.query_params))
 
+    @action(detail=True, methods=["get"], url_path="invoice-pdf")
+    def invoice_pdf(self, request, pk=None):
+        from .extract import MAX_BYTES, UnreadableInvoice, invoice_pdf
+
+        image = self.get_object().invoice_image
+        if not image:
+            raise NotFound("This customer has no saved invoice.")
+        paired_path = _paired_invoice_pdf(image.name)
+        try:
+            document = image.storage.open(paired_path, "rb") if paired_path else None
+        except FileNotFoundError:
+            document = None
+
+        if document is None:
+            try:
+                with image.storage.open(image.name, "rb") as stored_image:
+                    data = stored_image.read(MAX_BYTES + 1)
+                if len(data) > MAX_BYTES:
+                    raise UnreadableInvoice("The saved invoice preview is too large.")
+                document = io.BytesIO(invoice_pdf(data))
+            except FileNotFoundError as exc:
+                raise NotFound("The saved invoice file could not be found.") from exc
+            except UnreadableInvoice as exc:
+                raise ValidationError({"invoice": str(exc)}) from exc
+        response = FileResponse(document, content_type="application/pdf", filename="invoice.pdf")
+        response["Cache-Control"] = "private, no-store, max-age=0"
+        response["X-Content-Type-Options"] = "nosniff"
+        return response
+
     def perform_destroy(self, instance):
         files = [(f.storage, f.name) for f in (
             instance.poster, instance.selfie, instance.poster_thumb, instance.selfie_thumb,
             instance.invoice_image, instance.whatsapp_proof, instance.follow_proof,
         ) if f]
+        pdf_path = _paired_invoice_pdf(instance.invoice_image.name)
+        if pdf_path:
+            files.append((instance.invoice_image.storage, pdf_path))
         with transaction.atomic():
             instance.delete()
             transaction.on_commit(lambda: [storage.delete(name) for storage, name in files])

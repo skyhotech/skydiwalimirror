@@ -2,7 +2,6 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Gift, Sparkles } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { REWARDS, preloadRewards, sounds, type Reward } from "../lib/rewards";
-const SLICE = 360 / REWARDS.length;
 // Length of process spin.mp3; replaced by the real duration once it loads.
 const FALLBACK_SPIN_MS = 2424;
 // Full turns per spin.
@@ -17,10 +16,11 @@ function point(angle: number, radius: number) {
   const a = ((angle - 90) * Math.PI) / 180;
   return [R + radius * Math.cos(a), R + radius * Math.sin(a)];
 }
-function slicePath(i: number) {
-  const [x1, y1] = point(i * SLICE, R - 14);
-  const [x2, y2] = point((i + 1) * SLICE, R - 14);
-  return `M${R},${R} L${x1},${y1} A${R - 14},${R - 14} 0 0 1 ${x2},${y2} Z`;
+function slicePath(i: number, slice: number) {
+  const [x1, y1] = point(i * slice, R - 14);
+  const [x2, y2] = point((i + 1) * slice, R - 14);
+  if (slice === 360) return `M${x1},${y1} a${R - 14},${R - 14} 0 1 1 0,${2 * (R - 14)} a${R - 14},${R - 14} 0 1 1 0,-${2 * (R - 14)} Z`;
+  return `M${R},${R} L${x1},${y1} A${R - 14},${R - 14} 0 ${slice > 180 ? 1 : 0} 1 ${x2},${y2} Z`;
 }
 // Time to enjoy the win (sound, confetti) before the prize is added automatically.
 const AUTO_CLAIM_MS = 2200;
@@ -31,7 +31,9 @@ const LANDING_EASE = "cubic-bezier(0.33, 0.6, 0.3, 1)";
 export function SpinWheel({
   onClaim,
   getPrize,
+  rewards = REWARDS,
 }: {
+  rewards?: Reward[];
   onClaim: (reward: Reward) => void;
   /** Resolves the prize id; the server decides it, once per customer.
    *  onQueue(true) while the customer waits in line because SKY is busy. */
@@ -39,6 +41,7 @@ export function SpinWheel({
     onQueue: (waiting: boolean) => void;
   }) => Promise<string>;
 }) {
+  const slice = 360 / rewards.length;
   const [rotation, setRotation] = useState(0);
   const [spinMs, setSpinMs] = useState(FALLBACK_SPIN_MS);
   const [ease, setEase] = useState(LANDING_EASE);
@@ -140,7 +143,7 @@ export function SpinWheel({
           }, 500);
         }),
       ]);
-      index = REWARDS.findIndex((r) => r.id === prize);
+      index = rewards.findIndex((r) => r.id === prize);
       if (index < 0) throw new Error("Unknown prize. Try again.");
     } catch (e) {
       audio?.pause();
@@ -151,7 +154,7 @@ export function SpinWheel({
     }
     // Same two turns, ending with the middle of the prize slice under the
     // pointer. If the prize came late, this is one short final move.
-    const landing = 360 - (index * SLICE + SLICE / 2);
+    const landing = 360 - (index * slice + slice / 2);
     const target = base + SPIN_TURNS * 360 + landing;
     const remaining = Math.max(1200, ms - (performance.now() - started));
     let done = false;
@@ -166,7 +169,7 @@ export function SpinWheel({
       }
       // A long celebratory buzz (Android; iPhones don't allow vibration).
       navigator.vibrate?.([220, 90, 220, 90, 900]);
-      const reward = REWARDS[index];
+      const reward = rewards[index];
       setWon(reward);
       setPhase("won");
       claimTimer.current = window.setTimeout(
@@ -244,8 +247,8 @@ export function SpinWheel({
                 aria-hidden="true"
               >
                 <defs>
-                  {REWARDS.map((r, i) => {
-                    const [cx, cy] = point(i * SLICE + SLICE / 2, R * 0.58);
+                  {rewards.map((r, i) => {
+                    const [cx, cy] = point(i * slice + slice / 2, R * 0.58);
                     return (
                       <clipPath key={r.id} id={`spin-clip-${r.id}`}>
                         <circle cx={cx} cy={cy} r={28} />
@@ -258,8 +261,8 @@ export function SpinWheel({
                   </radialGradient>
                 </defs>
                 <circle cx={R} cy={R} r={R - 1} fill="#5a1426" />
-                {REWARDS.map((r, i) => {
-                  const mid = i * SLICE + SLICE / 2;
+                {rewards.map((r, i) => {
+                  const mid = i * slice + slice / 2;
                   const [cx, cy] = point(mid, R * 0.58);
                   const [tx, ty] = point(mid, R * 0.83);
                   const light = i % 2 === 1;
@@ -273,7 +276,7 @@ export function SpinWheel({
                       }
                     >
                       <path
-                        d={slicePath(i)}
+                        d={slicePath(i, slice)}
                         fill={COLORS[i % COLORS.length]}
                         stroke="#fff4dc"
                         strokeWidth={2}

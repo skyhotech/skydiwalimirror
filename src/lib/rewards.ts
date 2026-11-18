@@ -16,23 +16,29 @@ export const REWARDS: Reward[] = [
   { id: "mobile-stand", label: "Mobile Stand", image: mobileStand },
   { id: "power-bank", label: "Power Bank", image: powerBank },
 ];
+let linkedRewards: Reward[] = [];
+export function setLinkedRewards(rewards: Reward[]) {
+  linkedRewards = rewards;
+}
 export const getReward = (id: string | null | undefined) =>
-  REWARDS.find((r) => r.id === id) ?? null;
+  linkedRewards.find((r) => r.id === id) ?? REWARDS.find((r) => r.id === id) ?? null;
 export const sounds = { spin: spinSound, win: winSound };
 // Decoded images for the poster renderer; drawing starts once loaded.
 const images = new Map<string, HTMLImageElement>();
 export function rewardImage(reward: Reward) {
-  let image = images.get(reward.id);
+  let image = images.get(reward.image);
   if (!image) {
     image = new Image();
+    if (!reward.image) return null;
+    if (new URL(reward.image, location.href).origin !== location.origin) image.crossOrigin = "anonymous";
     image.src = reward.image;
-    images.set(reward.id, image);
+    images.set(reward.image, image);
   }
   return image.complete && image.naturalWidth ? image : null;
 }
 let soundsLoaded = false;
 export function preloadRewards() {
-  REWARDS.forEach(rewardImage);
+  [...REWARDS, ...linkedRewards].forEach(rewardImage);
   if (!soundsLoaded) {
     soundsLoaded = true;
     for (const url of [spinSound, winSound]) void fetch(url).catch(() => {});

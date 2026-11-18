@@ -323,7 +323,7 @@ class CustomerEvent(models.Model):
     # Shared on Instagram and WhatsApp: the gift may be collected.
     GIFT_UNLOCKED = "gift_unlocked"
     # Opened the Instagram profile to follow / the Google review page (optional).
-    STEP_KINDS = ["follow_opened", "google_review_opened"]
+    STEP_KINDS = ["follow_opened", "google_review_opened"] + [f"returned_{p}" for p in PLATFORMS]
 
     customer = models.ForeignKey(
         Customer, null=True, blank=True, on_delete=models.CASCADE, related_name="events"

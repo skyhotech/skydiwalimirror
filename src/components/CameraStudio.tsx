@@ -44,7 +44,7 @@ const AUTO_GESTURES: Record<string, string> = {
   Thumb_Up: "👍 Thumbs up!",
   Open_Palm: "✋ High five!",
 };
-export default function CameraStudio() {
+export default function CameraStudio({ linked = false }: { linked?: boolean }) {
   const s = useStudio(),
     product = s.step === "product";
   const [closed, setClosed] = useState(false),
@@ -224,7 +224,7 @@ export default function CameraStudio() {
       camera.stop();
       setCompleted(true);
       // First product unlocks the prize wheel; its result goes on the poster.
-      if (!useStudio.getState().reward) {
+      if (!linked && !useStudio.getState().reward) {
         setSpinOpen(true);
         setMessage("Spin the wheel for your free gift!");
         return;
@@ -275,7 +275,8 @@ export default function CameraStudio() {
     const blob = await canvasBlob(c, "image/jpeg", 0.92);
     c.width = c.height = 1;
     setPoster(blob);
-    s.setSavedPoster(blob);
+    if (linked) useStudio.setState({ savedPoster: blob });
+    else s.setSavedPoster(blob);
     // No automatic share here (it isn't a tap, so phones would refuse it):
     // the customer taps Post on Instagram, which opens the share sheet.
     setMessage("Your poster is ready! Tap Post on Instagram to share it.");
@@ -403,8 +404,8 @@ export default function CameraStudio() {
               completed && poster && !busy ? " ready-to-share" : ""
             }`}
             aria-label={
-              product && !completed
-                ? "Capture product and post on Instagram"
+              linked ? (product ? "Capture product" : "Take selfie")
+                : product && !completed ? "Capture product and post on Instagram"
                 : "Post on Instagram"
             }
             disabled={
@@ -418,8 +419,8 @@ export default function CameraStudio() {
               {busy
                 ? "Preparing…"
                 : product && !completed
-                  ? "Capture product & post"
-                  : "Post on Instagram"}
+                  ? linked ? "Capture product" : "Capture product & post"
+                  : linked ? "Take selfie" : "Post on Instagram"}
             </span>
           </button>
           {!completed && (
@@ -462,7 +463,7 @@ export default function CameraStudio() {
               : camera.ready
                 ? product
                   ? "Selfie saved. Capture your purchase in the small box."
-                  : "Tap Post on Instagram to take your selfie."
+                  : linked ? "Tap Take selfie to make your poster." : "Tap Post on Instagram to take your selfie."
                 : closed
                   ? "Camera paused. Tap the camera icon to resume."
                   : "Starting camera…")}

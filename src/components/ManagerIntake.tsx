@@ -174,7 +174,6 @@ export function ManagerIntake() {
     if (!form.invoice.trim()) return "Enter the invoice number.";
     if (!(Number(form.bill) >= 1)) return "Enter the bill value.";
     if (!image) return "Upload the invoice PDF or image.";
-    if (!branch) return "We couldn’t identify the SKY store on this invoice. Upload the full PDF with the store contact number visible.";
     if (!image.type.startsWith("image/") && image.type !== "application/pdf" && !/\.pdf$/i.test(image.name))
       return "The invoice must be an image or PDF.";
     return "";
@@ -207,7 +206,7 @@ export function ManagerIntake() {
       body.append("imei", form.imei);
       body.append("invoice_number", form.invoice.trim());
       body.append("bill_value", form.bill);
-      body.append("branch", branch!.slug);
+      if (branch) body.append("branch", branch.slug);
       body.append("scan", scanId);
       body.append("blur_score", String(Math.round(sharpness)));
       const res = await checkPurchase(body);

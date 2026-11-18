@@ -3533,3 +3533,19 @@ html.no-pull-refresh body {
     animation: none;
   }
 }
+
+.journey-poster {
+  display: block;
+  width: min(100%, 230px);
+  border-radius: 12px;
+  margin: 12px auto;
+}
+.journey-share-option {
+  display: grid;
+  gap: 8px;
+  margin-block: 14px;
+  text-align: left;
+}
+.journey-share-option input {
+  width: 100%;
+}

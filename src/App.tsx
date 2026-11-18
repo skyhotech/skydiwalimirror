@@ -12,10 +12,25 @@ const ManagerIntake = lazy(() =>
   import("./components/ManagerIntake").then((m) => ({ default: m.ManagerIntake }))
 );
 
+const CustomerJourney = lazy(() => import("./components/CustomerJourney"));
+
 const params = new URLSearchParams(window.location.search);
-const IS_CUSTOMER = params.has("spin") || params.has("customer");
+const spinToken = params.get("spin");
+const IS_CUSTOMER = params.has("customer");
 
 export default function App() {
+  if (spinToken)
+    return (
+      <MotionConfig reducedMotion="user">
+        <Suspense fallback={<div className="loading">Opening your gift link…</div>}>
+          <CustomerJourney token={spinToken} />
+        </Suspense>
+      </MotionConfig>
+    );
+  return <LegacyStudio />;
+}
+
+function LegacyStudio() {
   const step = useStudio((s) => s.step);
   const phone = useStudio((s) => s.phone);
   // Gift pictures and the spin sound start loading once the customer signs

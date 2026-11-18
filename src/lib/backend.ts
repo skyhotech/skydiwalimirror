@@ -150,7 +150,7 @@ export async function fetchBranch(): Promise<
   }
   return null;
 }
-async function postJson<T>(path: string, body: unknown, api = API): Promise<T> {
+export async function postJson<T>(path: string, body: unknown, api = API): Promise<T> {
   if (!navigator.onLine) throw new ApiError(ERRORS.offline);
   let res: Response;
   try {
@@ -383,13 +383,13 @@ async function asJpeg(blob: Blob, maxSide = Infinity): Promise<Blob> {
 }
 
 // Use the Vercel proxy for intake to avoid a separate browser TLS and CORS handshake.
-const INTAKE_API = onVercel && !import.meta.env.VITE_API_URL ? "/api" : API;
+export const STUDIO_API = onVercel && !import.meta.env.VITE_API_URL ? "/api" : API;
 export type BranchOption = { slug: string; name: string; phone?: string };
 
 export async function fetchManagerBranches() {
   let res: Response;
   try {
-    res = await fetch(`${INTAKE_API}/manager/branches/`, {
+    res = await fetch(`${STUDIO_API}/manager/branches/`, {
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
   } catch {
@@ -428,14 +428,14 @@ export async function scanInvoice(file: File | Blob, name = "invoice") {
   const form = new FormData();
   const upload = file instanceof File ? await shrinkPhoto(file) : file;
   form.append("invoice", upload, file instanceof File ? file.name : `${name}.jpg`);
-  return postJson<{ scan: string; text: string }>("/manager/scan/", form, upload.size > 4_000_000 ? API : INTAKE_API);
+  return postJson<{ scan: string; text: string }>("/manager/scan/", form, upload.size > 4_000_000 ? API : STUDIO_API);
 }
 
 export const checkPurchase = (form: FormData) =>
-  postJson<{ phone: string; link: string }>("/manager/check/", form, INTAKE_API);
+  postJson<{ phone: string; link: string }>("/manager/check/", form, STUDIO_API);
 
 export function trackSent(phone: string) {
-  void fetch(`${INTAKE_API}/manager/sent/`, {
+  void fetch(`${STUDIO_API}/manager/sent/`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ phone }),
