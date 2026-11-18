@@ -382,6 +382,83 @@ async function asJpeg(blob: Blob, maxSide = Infinity): Promise<Blob> {
   }
 }
 
+export type BranchOption = { slug: string; name: string; phone?: string };
+
+export async function fetchManagerBranches() {
+  let res: Response;
+  try {
+    res = await fetch(`${API}/manager/branches/`, {
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+  } catch {
+    throw new ApiError(ERRORS.unreachable);
+  }
+  if (!res.ok) throw new ApiError(ERRORS.server, res.status);
+  const branches: unknown = await res.json();
+  if (!Array.isArray(branches) || branches.some((b) =>
+    !b || typeof b.name !== "string" || typeof b.slug !== "string"
+  )) {
+    throw new ApiError(ERRORS.server, res.status);
+  }
+  return branches as BranchOption[];
+}
+
+const UPLOAD_SIDE = 2600;
+async function shrinkPhoto(file: File): Promise<Blob> {
+  if (file.type === "application/pdf" || file.size < 1_500_000) return file;
+  try {
+    const bitmap = await createImageBitmap(file);
+    const scale = Math.min(1, UPLOAD_SIDE / Math.max(bitmap.width, bitmap.height));
+    const c = document.createElement("canvas");
+    c.width = Math.round(bitmap.width * scale);
+    c.height = Math.round(bitmap.height * scale);
+    c.getContext("2d")!.drawImage(bitmap, 0, 0, c.width, c.height);
+    bitmap.close();
+    return await new Promise<Blob>((resolve) =>
+      c.toBlob((b) => resolve(b ?? file), "image/jpeg", 0.92),
+    );
+  } catch {
+    return file;
+  }
+}
+
+export async function scanInvoice(file: File | Blob, name = "invoice") {
+  const form = new FormData();
+  const upload = file instanceof File ? await shrinkPhoto(file) : file;
+  const pdf = upload.type === "application/pdf";
+  form.append("invoice", upload, pdf ? "invoice.pdf" : `${name}.jpg`);
+  return postJson<{ scan: string; text: string }>("/manager/scan/", form);
+}
+
+export const checkPurchase = (form: FormData) =>
+  postJson<{ phone: string; link: string }>("/manager/check/", form);
+
+export function trackSent(phone: string) {
+  void fetch(`${API}/manager/sent/`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ phone }),
+    keepalive: true,
+  }).catch(() => {});
+}
+
+export function imeiValid(imei: string): boolean {
+  let sum = 0;
+  for (let i = 0; i < 15; i++) {
+    let d = parseInt(imei[i], 10);
+    if (i % 2 === 1) { d *= 2; if (d > 9) d -= 9; }
+    sum += d;
+  }
+  return sum % 10 === 0;
+}
+
+export function imeiOrSerialValid(value: string) {
+  const v = value.trim();
+  return /^\d{15}$/.test(v)
+    ? imeiValid(v)
+    : /^[A-Z0-9][A-Z0-9_-]{3,29}$/i.test(v);
+}
+
 export async function uploadCustomer(data: Upload) {
   setUploadState("saving");
   data = {

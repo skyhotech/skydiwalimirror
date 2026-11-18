@@ -8,6 +8,12 @@ import { useStudio } from "./lib/store";
 import { initializePhotoStorage } from "./lib/persistence";
 const CameraStudio = lazy(() => import("./components/CameraStudio"));
 const Editor = lazy(() => import("./components/Editor"));
+const ManagerIntake = lazy(() =>
+  import("./components/ManagerIntake").then((m) => ({ default: m.ManagerIntake }))
+);
+
+const IS_STAFF = new URLSearchParams(window.location.search).has("staff");
+
 export default function App() {
   const step = useStudio((s) => s.step);
   const phone = useStudio((s) => s.phone);
@@ -42,6 +48,18 @@ export default function App() {
   }, []);
   if (!hydrated)
     return <div className="loading">Opening your saved studio…</div>;
+
+  if (IS_STAFF)
+    return (
+      <MotionConfig reducedMotion="user">
+        <main id="main" className="mobile-studio">
+          <Suspense fallback={<div className="loading">Loading staff portal…</div>}>
+            <ManagerIntake />
+          </Suspense>
+        </main>
+      </MotionConfig>
+    );
+
   if (!phone)
     return (
       <MotionConfig reducedMotion="user">

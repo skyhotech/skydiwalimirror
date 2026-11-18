@@ -238,6 +238,34 @@ def mirror_stream(request):
     return response
 
 
+class CustomerRegister(APIView):
+    """Sign-in by mobile number. Returns the customer's prize if already spun."""
+
+    authentication_classes = []
+    permission_classes = [AllowAny]
+    throttle_classes = [CustomerRegisterThrottle, RepeatThrottle]
+
+    def post(self, request):
+        from .serializers import RegisterSerializer
+        ser = RegisterSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        phone = ser.validated_data["phone"]
+        branch = _branch(ser.validated_data.get("branch"))
+        customer, created = Customer.objects.get_or_create(
+            phone=phone, defaults={"session": f"phone-{phone}"}
+        )
+        changed = _file_under(customer, branch)
+        if not customer.consent_at:
+            customer.consent_at = timezone.now()
+            changed.append("consent_at")
+        if changed:
+            customer.save(update_fields=[*changed, "updated_at"])
+        return Response(
+            {"phone": phone, "reward": customer.reward or None, "returning": not created},
+            status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
+        )
+
+
 class CustomerUpload(APIView):
     authentication_classes = []
     permission_classes = [AllowAny]
