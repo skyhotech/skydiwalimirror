@@ -227,6 +227,16 @@ class Customer(models.Model):
         max_length=10, blank=True,
         choices=[("pending", "Pending"), ("verified", "Verified"), ("rejected", "Rejected")],
     )
+    instagram_proof = models.ImageField(upload_to=customer_path, blank=True)
+    instagram_proof_status = models.CharField(
+        max_length=10, blank=True,
+        choices=[("pending", "Pending"), ("verified", "Verified"), ("rejected", "Rejected")],
+    )
+    more_proof = models.ImageField(upload_to=customer_path, blank=True)
+    more_proof_status = models.CharField(
+        max_length=10, blank=True,
+        choices=[("pending", "Pending"), ("verified", "Verified"), ("rejected", "Rejected")],
+    )
     # Asked when the customer shares on Facebook.
     facebook_profile = models.CharField(max_length=200, blank=True)
     # Asked straight after the spin, before the mirror selfie.
@@ -293,6 +303,12 @@ class Customer(models.Model):
         if "link_opened" in kinds:
             return "link_opened"
         return "whatsapp_sent" if "whatsapp_sent" in kinds else "checked"
+
+
+class InvoiceSubmission(models.Model):
+    """Filename reserved once an invoice has been successfully submitted."""
+
+    filename_key = models.CharField(max_length=64, primary_key=True)
 
 
 class CustomerEvent(models.Model):

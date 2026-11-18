@@ -33,6 +33,9 @@
   .primary { background: var(--ink); color: #fff; border-color: var(--ink); }
   .danger { color: var(--accent); border-color: #f2c4cf; }
   /* Season filter tabs */
+  .customer-period { display:flex; align-items:center; flex-wrap:wrap; gap:8px; }
+  .customer-period label { font-size:13px; font-weight:600; }
+  #c-custom-range[hidden] { display:none; }
   .season-tabs { display: flex; gap: 4px; background: #f0e8da; border-radius: 10px; padding: 3px; }
   .stab { font-size: 13px; padding: 5px 12px; border: none; background: transparent; border-radius: 7px; cursor: pointer; color: var(--muted); }
   .stab.active { background: #fff; color: var(--ink); box-shadow: 0 1px 3px rgba(0,0,0,.12); font-weight: 600; }
@@ -645,21 +648,22 @@
       <div class="toolbar">
         <h2>Customers</h2>
         <div class="row">
-          <div class="season-tabs" id="cust-season">
-            <button class="stab active" data-season="">All</button>
-            <button class="stab kd" data-season="karthigai">🪔 Karthigai Deepam</button>
-            <button class="stab" data-season="other">Other</button>
+          <div class="customer-period">
+            <label for="c-period">Period</label>
+            <select id="c-period">
+              <option value="">All dates</option>
+              <option value="today">Today</option>
+              <option value="karthigai">Karthigai Deepam</option>
+              <option value="custom">Custom date</option>
+              <option value="other">Other mirrors</option>
+            </select>
           </div>
-          <div class="date-bar">
-            <button class="dqbtn" id="c-today">Today</button>
-            <button class="dqbtn" id="c-week">This week</button>
-            <button class="dqbtn" id="c-month">This month</button>
-            <div class="date-range">
-              <input type="date" id="c-from" title="From date">
-              <span class="date-sep">→</span>
-              <input type="date" id="c-to" title="To date">
-            </div>
-            <button class="dqbtn" id="c-clear-date" style="display:none">✕ Clear</button>
+          <div class="customer-period" id="c-custom-range" hidden>
+            <label for="c-from">From date</label>
+            <input type="date" id="c-from">
+            <label for="c-to">To date</label>
+            <input type="date" id="c-to">
+            <button type="button" id="c-apply-range">Apply</button>
           </div>
           <select id="c-status"><option value="">All customers</option><option value="1">Abandoned</option></select>
           <input id="c-q" placeholder="Search name, phone, IMEI or invoice">
@@ -1129,7 +1133,6 @@
     return { from: () => fromIn.value, to: () => toIn.value };
   }
 
-  const cDateFilter = setupDateFilter({ prefix: "c", onApply: () => loadCustomers(true).catch((e) => toast(e.message, true)) });
   const vrDateFilter = setupDateFilter({ prefix: "vr", onApply: () => { vrPage = 1; loadVideoReviews().catch((e) => toast(e.message, true)); } });
 
   let vrPage = 1;
@@ -1534,7 +1537,8 @@
     });
     return el;
   }
-  let cPage = 1, cTimer;
+  let cPage = 1, cTimer, cLoad = 0;
+  let customerRange = {};
   // Season filter state shared by dashboard and customers views.
   let activeSeason = "";
   function setupSeasonTabs(containerId, onChange) {
@@ -1550,9 +1554,11 @@
   }
 
   async function loadCustomers(reset) {
+    const load = ++cLoad;
     if (reset) {
       cPage = 1; $("#c-grid").innerHTML = "";
       const [ms, bs] = await Promise.all([api("mirrors/"), api("branches/")]);
+      if (load !== cLoad) return;
       const sel = $("#c-mirror"), keep = sel.value;
       sel.innerHTML = `<option value="">All mirrors</option>` + ms.map((m) => `<option value="${m.id}">${esc(m.name)}</option>`).join("");
       sel.value = keep;
@@ -1565,14 +1571,16 @@
     if ($("#c-mirror").value) params.set("mirror", $("#c-mirror").value);
     if ($("#c-branch").value) params.set("branch", $("#c-branch").value);
     if ($("#c-status").value) params.set("abandoned", "1");
-    if (activeSeason) params.set("season", activeSeason);
-    if (cDateFilter.from()) params.set("date_from", cDateFilter.from());
-    if (cDateFilter.to()) params.set("date_to", cDateFilter.to());
-    // Update export link to include current filters.
-    const exportUrl = "/api/admin/customers/export/?" + params;
-    const expBtn = $("#c-export-btn");
-    if (expBtn) expBtn.href = exportUrl;
+    const period = $("#c-period").value;
+    if (period === "today") params.set("period", "today");
+    if (period === "karthigai" || period === "other") params.set("season", period);
+    if (period === "custom") {
+      if (customerRange.from) params.set("date_from", customerRange.from);
+      if (customerRange.to) params.set("date_to", customerRange.to);
+    }
+    $("#c-export-btn").href = "/api/admin/customers/export/?" + params;
     const data = await api("customers/?" + params);
+    if (load !== cLoad) return;
     $("#nav-customers").textContent = data.count;
     const grid = $("#c-grid");
     grid.innerHTML = data.results.length ? "" : `<div class="empty-note">No customers yet. Selfies appear here when someone exports a poster in the studio.</div>`;
@@ -1583,7 +1591,17 @@
     });
   }
 
-  setupSeasonTabs("cust-season", () => loadCustomers(true).catch((e) => toast(e.message, true)));
+  const reloadCustomers = () => loadCustomers(true).catch((e) => toast(e.message, true));
+  $("#c-period").addEventListener("change", () => {
+    $("#c-custom-range").hidden = $("#c-period").value !== "custom";
+    reloadCustomers();
+  });
+  $("#c-apply-range").addEventListener("click", () => {
+    const from = $("#c-from").value, to = $("#c-to").value;
+    if (from && to && from > to) return toast("To date must be on or after From date.", true);
+    customerRange = { from, to };
+    reloadCustomers();
+  });
   $("#c-status").addEventListener("change", () => loadCustomers(true).catch((e) => toast(e.message, true)));
   $("#c-mirror").addEventListener("change", () => loadCustomers(true).catch((e) => toast(e.message, true)));
   $("#c-branch").addEventListener("change", () => loadCustomers(true).catch((e) => toast(e.message, true)));

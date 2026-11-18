@@ -427,8 +427,7 @@ async function shrinkPhoto(file: File): Promise<Blob> {
 export async function scanInvoice(file: File | Blob, name = "invoice") {
   const form = new FormData();
   const upload = file instanceof File ? await shrinkPhoto(file) : file;
-  const pdf = upload.type === "application/pdf" || (file instanceof File && /\.pdf$/i.test(file.name));
-  form.append("invoice", upload, pdf ? "invoice.pdf" : `${name}.jpg`);
+  form.append("invoice", upload, file instanceof File ? file.name : `${name}.jpg`);
   return postJson<{ scan: string; text: string }>("/manager/scan/", form, upload.size > 4_000_000 ? API : INTAKE_API);
 }
 

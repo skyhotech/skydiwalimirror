@@ -16,9 +16,12 @@ test("the manager form fills a PDF and sends the corrected values", async ({ pag
   await page.route("**/api/manager/branches/", (route) => route.fulfill({
     json: [{ slug: "ranipet-2", name: "RANIPET-2", phone: "8667670649" }],
   }));
-  await page.route("**/api/manager/scan/", (route) => route.fulfill({
-    json: { text: line.join("\n"), scan: "invoice-scan-token" },
-  }));
+  await page.route("**/api/manager/scan/", (route) => {
+    expect(route.request().postData()).toContain('filename="counter-21003.pdf"');
+    return route.fulfill({
+      json: { text: line.join("\n"), scan: "invoice-scan-token" },
+    });
+  });
   await page.route("**/api/manager/check/", async (route) => {
     const body = route.request().postData() ?? "";
     expect(body).toContain("invoice-scan-token");
@@ -44,7 +47,7 @@ test("the manager form fills a PDF and sends the corrected values", async ({ pag
   await upload.focus();
   await expect(upload).toBeFocused();
   await upload.setInputFiles({
-    name: "invoice.pdf", mimeType: "application/pdf", buffer: Buffer.from("%PDF-1.4"),
+    name: "counter-21003.pdf", mimeType: "application/pdf", buffer: Buffer.from("%PDF-1.4"),
   });
   await expect(page.getByLabel("Customer name")).toHaveValue("Asha Example");
   await expect(page.getByLabel("Customer contact number")).toHaveValue("9845011111");

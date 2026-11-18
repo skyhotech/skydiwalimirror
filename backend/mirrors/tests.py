@@ -1,6 +1,7 @@
 import io
 import shutil
 import tempfile
+from datetime import datetime, timedelta, timezone as utc
 
 from django.contrib.auth.models import User
 from django.core.cache import cache
@@ -15,7 +16,7 @@ from .extract import ocr_available
 from unittest.mock import patch
 
 from .throttles import RepeatThrottle
-from .models import Branch, Customer, CustomerEvent, SpinItem
+from .models import Branch, Customer, CustomerEvent, InvoiceSubmission, Mirror, SpinItem
 
 MEDIA = tempfile.mkdtemp()
 IMEI = "490154203237518"
@@ -311,6 +312,59 @@ class BranchFlowTests(TestCase):
         self.assertIsNone(customer.imei)
         self.assertEqual(customer.bill_value, 50000)
         self.assertLess(customer.invoice_image.size, 200_000)
+
+    @override_settings(MATCH_INVOICE_DETAILS=False)
+    def test_invoice_filename_is_reserved_only_after_successful_check(self):
+        scanned = []
+        for filename in ("COUNTER-123.PDF", "counter-123.pdf"):
+            invoice = text_pdf(bill_text("9845011111", IMEI))
+            res = self.client.post("/api/manager/scan/", {
+                "invoice": SimpleUploadedFile(filename, invoice, "application/pdf")
+            })
+            self.assertEqual(res.status_code, 200, res.data)
+            scanned.append(res.json()["scan"])
+        data = {
+            "name": "Asha", "phone": "9845011111", "product_details": "Phone 15",
+            "invoice_number": "INVOICE-123", "bill_value": "24999", "branch": "anna-nagar",
+            "blur_score": 200,
+        }
+        rejected = self.client.post("/api/manager/check/", {
+            **data, "scan": scanned[0], "branch": "invalid-store",
+        })
+        self.assertEqual(rejected.status_code, 400)
+        self.assertFalse(InvoiceSubmission.objects.exists())
+        accepted = self.client.post("/api/manager/check/", {**data, "scan": scanned[0]})
+        self.assertEqual(accepted.status_code, 200, accepted.data)
+        duplicate = self.client.post("/api/manager/check/", {
+            **data, "scan": scanned[1], "phone": "9845022222", "invoice_number": "DIFFERENT-123",
+        })
+        self.assertEqual(duplicate.status_code, 409)
+        self.assertEqual(Customer.objects.count(), 1)
+        again = self.client.post("/api/manager/scan/", {
+            "invoice": SimpleUploadedFile("Counter-123.pdf", b"not read again", "application/pdf")
+        })
+        self.assertEqual(again.status_code, 409)
+
+    def test_customer_period_filters_use_indian_calendar_dates(self):
+        day = datetime(2026, 11, 18, 18, 30, tzinfo=utc.utc)  # Nov 19 starts in India
+        deepam = Mirror.objects.create(name="Karthigai Deepam")
+        today = Customer.objects.create(name="Today", session="today")
+        older = Customer.objects.create(name="Older", session="older", mirror=deepam)
+        Customer.objects.filter(pk=today.pk).update(created_at=day)
+        Customer.objects.filter(pk=older.pk).update(created_at=day - timedelta(seconds=1))
+        self.client.force_login(self.staff)
+        url = "/api/admin/customers/"
+        with patch("django.utils.timezone.now", return_value=day):
+            self.assertEqual(self.client.get(url, {"period": "today"}).json()["count"], 1)
+        data = self.client.get(url, {"season": "karthigai"}).json()
+        self.assertEqual([c["name"] for c in data["results"]], ["Older"])
+        dates = {"date_from": "2026-11-18", "date_to": "2026-11-18"}
+        data = self.client.get(url, dates).json()
+        self.assertEqual([c["name"] for c in data["results"]], ["Older"])
+        exported = b"".join(self.client.get(url + "export/", dates).streaming_content)
+        self.assertIn(b"Older", exported)
+        self.assertNotIn(b"Today", exported)
+        self.assertEqual(self.client.get(url, {"date_from": "2026-11-31"}).status_code, 400)
 
     def test_an_unknown_scan_is_refused(self):
         res = self.check(scan_override="nope")

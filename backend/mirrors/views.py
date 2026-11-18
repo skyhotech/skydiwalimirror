@@ -1,8 +1,10 @@
+import hashlib
 import json
 import secrets
 import threading
 import time
-from datetime import timedelta
+import unicodedata
+from datetime import datetime, timedelta
 from uuid import uuid4
 
 from django.conf import settings
@@ -18,19 +20,20 @@ import re
 from django.db.models import Avg, Count, Max, Q, Sum
 from django.shortcuts import render
 from django.utils import timezone
+from django.utils.dateparse import parse_date
 from django.views.decorators.csrf import ensure_csrf_cookie
 from rest_framework import mixins, status, viewsets
 from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.permissions import AllowAny, IsAdminUser
-from rest_framework.exceptions import ValidationError
+from rest_framework.exceptions import APIException, ValidationError
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from .images import POSTER_SIZE, SELFIE_SIZE, THUMB_SIZE, compressed_photo, optimized
 from .serializers import MAX_UPLOAD_BYTES
-from .models import Branch, Customer, CustomerEvent, Mirror, SpinItem
+from .models import Branch, Customer, CustomerEvent, InvoiceSubmission, Mirror, SpinItem
 from .serializers import (
     BranchSerializer,
     PublicBranchSerializer,
@@ -436,12 +439,29 @@ class ManagerBranches(APIView):
         return Response(PublicBranchSerializer(branches, many=True).data)
 
 
+class InvoiceAlreadySubmitted(APIException):
+    status_code = status.HTTP_409_CONFLICT
+    default_detail = "An invoice with this filename has already been submitted."
+    default_code = "invoice_already_submitted"
+
+
+def invoice_filename_key(filename):
+    basename = filename.replace("\\", "/").rsplit("/", 1)[-1]
+    name = unicodedata.normalize("NFKC", basename).strip().casefold()
+    return hashlib.sha256(name.encode("utf-8")).hexdigest()
+
+
 def _save_purchase(data, branch, **log):
     """Files a checked purchase (by the manager's check or an admin's
     approval) and gives it a spin link."""
     uploaded_invoice = None
     try:
         with transaction.atomic():
+            filename_key = data.get("invoice_filename_key")
+            if filename_key:
+                _, reserved = InvoiceSubmission.objects.get_or_create(filename_key=filename_key)
+                if not reserved:
+                    raise InvoiceAlreadySubmitted()
             customer = Customer.objects.select_for_update().filter(phone=data["phone"]).first()
             if customer and customer.reward:
                 raise ValidationError({"phone": ["This customer has already claimed a gift."]})
@@ -533,6 +553,9 @@ class ManagerCheck(APIView):
         ser = CustomerIntakeSerializer(data=request.data)
         ser.is_valid(raise_exception=True)
         data = ser.validated_data
+        data["invoice_filename_key"] = cache.get(f"invoice-filename:{data['scan']}")
+        if data["scan"].startswith("f1_") and not data["invoice_filename_key"]:
+            raise ValidationError({"invoice_image": ["Please upload the invoice again."]})
         customer = _save_purchase(data, _branch(data["branch"]))
         return Response({"phone": customer.phone, "link": spin_link(customer.spin_token)})
 
@@ -559,6 +582,9 @@ class ManagerScan(APIView):
             return Response({"invoice": ["Upload the invoice image or PDF."]}, status=400)
         if upload.size > MAX_BYTES:
             return Response({"invoice": ["The invoice file is too large (max 15 MB)."]}, status=400)
+        filename_key = invoice_filename_key(upload.name)
+        if InvoiceSubmission.objects.filter(filename_key=filename_key).exists():
+            raise InvoiceAlreadySubmitted()
         if not _OCR_WORK.acquire(timeout=5):
             return Response(
                 {"detail": "SKY is busy reading other invoices. Please try again."},
@@ -576,10 +602,11 @@ class ManagerScan(APIView):
             return Response({"invoice": [str(exc)]}, status=400)
         finally:
             _OCR_WORK.release()
-        scan = secrets.token_urlsafe(16)
+        scan = "f1_" + secrets.token_urlsafe(16)
         cache.set_many({
             f"invoice-scan:{scan}": text,
             f"invoice-preview:{scan}": preview,
+            f"invoice-filename:{scan}": filename_key,
         }, SCAN_SECONDS)
         return Response(
             {"scan": scan, "text": text},
@@ -879,6 +906,35 @@ class MirrorViewSet(viewsets.ModelViewSet):
         return Response({"ok": True})
 
 
+def _customer_date_bounds(params):
+    """Interpret the inclusive date range using the store's timezone."""
+    if params.get("period") == "today":
+        first = last = timezone.localdate()
+    else:
+        dates = {}
+        for name in ("date_from", "date_to"):
+            raw = params.get(name)
+            if not raw:
+                continue
+            try:
+                day = parse_date(raw)
+            except ValueError:
+                day = None
+            if day is None or day.year in (1, 9999):
+                raise ValidationError({name: "Enter a valid date (YYYY-MM-DD)."})
+            dates[name] = day
+        first, last = dates.get("date_from"), dates.get("date_to")
+        if first and last and first > last:
+            raise ValidationError({"date_to": "To date must be on or after From date."})
+    zone = timezone.get_current_timezone()
+    bounds = {}
+    if first:
+        bounds["created_at__gte"] = timezone.make_aware(datetime.combine(first, datetime.min.time()), zone)
+    if last:
+        bounds["created_at__lt"] = timezone.make_aware(datetime.combine(last + timedelta(days=1), datetime.min.time()), zone)
+    return bounds
+
+
 class CustomerViewSet(
     mixins.ListModelMixin,
     mixins.RetrieveModelMixin,
@@ -923,13 +979,7 @@ class CustomerViewSet(
                 Q(name__icontains=search) | Q(phone__icontains=search)
                 | Q(imei__icontains=search) | Q(invoice_number__icontains=search)
             )
-        date_from = self.request.query_params.get("date_from")
-        date_to = self.request.query_params.get("date_to")
-        if date_from:
-            qs = qs.filter(created_at__date__gte=date_from)
-        if date_to:
-            qs = qs.filter(created_at__date__lte=date_to)
-        return qs
+        return qs.filter(**_customer_date_bounds(self.request.query_params))
 
     def perform_destroy(self, instance):
         files = [(f.storage, f.name) for f in (
