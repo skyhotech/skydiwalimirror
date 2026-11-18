@@ -275,7 +275,22 @@ class BranchFlowTests(TestCase):
             "invoice_number": f"INV-{IMEI}", "bill_value": "24999.00", "branch": "anna-nagar",
             "blur_score": 200, "scan": res.json()["scan"],
         }
+        wrong = self.client.post("/api/manager/check/", {**body, "bill_value": "50000"})
+        self.assertEqual(wrong.status_code, 400)
+        self.assertIn("bill_value", wrong.json())
+        self.assertFalse(Customer.objects.filter(phone=body["phone"]).exists())
         self.assertEqual(self.client.post("/api/manager/check/", body).status_code, 200)
+        customer = Customer.objects.get(phone=body["phone"])
+        self.assertLess(customer.invoice_image.size, 200_000)
+        with Image.open(customer.invoice_image) as proof:
+            self.assertEqual(proof.format, "JPEG")
+        self.assertEqual(self.client.get(customer.invoice_image.url).status_code, 403)
+        self.client.force_login(self.staff)
+        response = self.client.get(customer.invoice_image.url)
+        self.addCleanup(response.close)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers["Content-Type"], "image/jpeg")
+        self.assertIn("no-store", response.headers["Cache-Control"])
 
     def test_an_unknown_scan_is_refused(self):
         res = self.check(scan_override="nope")

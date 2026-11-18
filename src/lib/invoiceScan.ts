@@ -39,7 +39,7 @@ export function wordsToNumber(words: string) {
  *  payment lines added up, then the amount written in words. */
 function billAmount(text: string) {
   const row =
-    text.match(/net\s*total[^\n]*/i)?.[0] ??
+    text.match(/(?:net|grand)\s*total[^\n]*/i)?.[0] ??
     text.match(/^(?!.*tax).*\btotal\b[^\n]*/im)?.[0] ??
     "";
   const last = row.match(AMOUNT)?.pop();
@@ -59,6 +59,7 @@ export function luhnImeis(text: string) {
 export type InvoiceFields = {
   name: string;
   phone: string;
+  email: string;
   product: string;
   imei: string;
   invoice: string;
@@ -71,15 +72,21 @@ export function extractInvoice(
   const lines = text.split("\n").map((l) => l.replace(/[|\[\]]/g, " ").trim());
   const billedAt = lines.findIndex((l) => /billed\s*to/i.test(l));
   // Billed To and Shipped To sit side by side, so a name can appear twice.
-  const after = billedAt < 0 ? [] : lines.slice(billedAt + 1).filter(Boolean);
-  const words = (after[0] ?? "").split(/\s+/);
+  const inlineName = billedAt < 0 ? "" : lines[billedAt]
+    .split(/shipped\s*to/i)[0].replace(/^.*?billed\s*to[\s,:-]*/i, "").trim();
+  const after = billedAt < 0 ? [] : lines.slice(billedAt + 1)
+    .filter(Boolean).slice(0, 12);
+  const contactBlock = after.join("\n").split(/\b(?:particulars|place of supply|shipped to)\b/i)[0];
+  const emails = contactBlock.match(/[A-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi) ?? [];
+  const email = emails[0];
+  const words = (inlineName || after[0] || "").split(/\s+/);
   const half = words.length / 2;
   const twice =
     half % 1 === 0 && words.slice(0, half).join(" ") === words.slice(half).join(" ");
   const name = (twice ? words.slice(0, half) : words).join(" ");
-  const phone = after
-    .join("\n")
-    .match(/ph\w*\s*[.:;\-]*\s*(?:\+?91)?(\d{10})/i)?.[1];
+  const phone = contactBlock.match(
+    /\b(?:ph(?:one)?|mobile|contact)(?:[ .]?(?:number|no))?\s*[.:;\-]*\s*(?:\+?91[ -]?)?([6-9]\d{4}[ -]?\d{5})\b/i,
+  )?.[1].replace(/\D/g, "");
   // The item line follows the table header; if a scan garbled that, it
   // follows the last "Place of Supply" line of the Billed To block.
   let header = lines.findIndex((l) => /particulars/i.test(l));
@@ -94,11 +101,14 @@ export function extractInvoice(
   const bill = billAmount(text);
   // The store's own number sits above Billed To: it identifies the branch.
   const top = billedAt < 0 ? "" : text.slice(0, text.search(/billed\s*to/i));
-  const storePhone = top.match(/ph\w*\s*[.:;\-]*\s*(?:\+?91)?(\d{10})/i)?.[1];
+  const storePhone = top.match(
+    /\b(?:ph(?:one)?|mobile|contact)(?:[ .]?(?:number|no))?\s*[.:;\-]*\s*(?:\+?91[ -]?)?([6-9]\d{4}[ -]?\d{5})\b/i,
+  )?.[1].replace(/\D/g, "");
   return {
     storePhone,
     name: name || undefined,
     phone,
+    email,
     product,
     imei:
       [...text.matchAll(IMEI_LABEL)][0]?.[1].toUpperCase() ?? luhnImeis(text)[0],
@@ -123,8 +133,8 @@ export function sharpness(gray: Float32Array, w: number, h: number) {
   return n ? squares / n - (sum / n) ** 2 : 0;
 }
 /** Refuses a blurry photo before it is uploaded; PDFs are always sharp. */
-export async function checkSharpness(file: Blob) {
-  if (file.type === "application/pdf") return PDF_SHARPNESS;
+export async function checkSharpness(file: File) {
+  if (file.type === "application/pdf" || /\.pdf$/i.test(file.name)) return PDF_SHARPNESS;
   const score = await measure(file);
   if (score < SHARPNESS_FLOOR) throw new Error(BLURRY);
   return score;

@@ -165,6 +165,36 @@ def extract_text(data, name=""):
         raise UnreadableInvoice("We couldn't read this invoice. Please upload a clear photo or the PDF.") from exc
 
 
+# The dashboard already displays invoices as images. Re-encode uploads as a
+# private JPEG proof, stripping PDF actions, image metadata and attachments.
+INVOICE_PROOF_LIMIT = 200_000
+
+
+def invoice_preview(data):
+    """Return a readable first-page preview strictly below 200 KB."""
+    try:
+        if data.startswith(b"%PDF-"):
+            with _pdf_first_page(data) as source:
+                image = source.convert("L")
+        else:
+            with Image.open(io.BytesIO(data)) as source:
+                if source.width * source.height > 25_000_000:
+                    raise UnreadableInvoice("Invoice dimensions are too large.")
+                image = ImageOps.exif_transpose(source).convert("L")
+        with image:
+            image.thumbnail((1800, 2500), Image.Resampling.LANCZOS)
+            for bounds in ((1800, 2500), (1440, 2000), (1152, 1600), (900, 1250)):
+                image.thumbnail(bounds, Image.Resampling.LANCZOS)
+                for quality in (85, 72, 58, 45):
+                    with io.BytesIO() as output:
+                        image.save(output, "JPEG", quality=quality, optimize=True)
+                        if output.tell() < INVOICE_PROOF_LIMIT:
+                            return output.getvalue()
+    except (OSError, ValueError) as exc:
+        raise UnreadableInvoice("A preview could not be made from this invoice.") from exc
+    raise UnreadableInvoice("The invoice preview could not be compressed below 200 KB.")
+
+
 _PREFIX = re.compile(r"^(?:S[1Il|!]|5[Il|!1]|5I)(?=\d{4})")
 
 

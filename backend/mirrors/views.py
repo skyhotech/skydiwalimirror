@@ -3,6 +3,7 @@ import secrets
 import threading
 import time
 from datetime import timedelta
+from uuid import uuid4
 
 from django.conf import settings
 from django.contrib.admin.views.decorators import staff_member_required
@@ -10,6 +11,7 @@ from django.contrib.auth.views import LoginView
 from django.db import IntegrityError, close_old_connections, transaction
 from django.core.cache import cache
 from django.http import FileResponse, HttpResponse, JsonResponse, StreamingHttpResponse
+from django.core.files.base import ContentFile
 from django.core.files.storage import default_storage
 from django.views.decorators.http import require_safe
 import re
@@ -437,6 +439,7 @@ class ManagerBranches(APIView):
 def _save_purchase(data, branch, **log):
     """Files a checked purchase (by the manager's check or an admin's
     approval) and gives it a spin link."""
+    uploaded_invoice = None
     try:
         with transaction.atomic():
             customer = Customer.objects.select_for_update().filter(phone=data["phone"]).first()
@@ -474,11 +477,26 @@ def _save_purchase(data, branch, **log):
             if changed or not customer.spin_token:
                 customer.spin_token = secrets.token_urlsafe(24)
                 customer.link_version += 1
+            previous_invoice = customer.invoice_image.name
+            preview = data.get("invoice_preview")
+            if preview:
+                storage = customer.invoice_image.storage
+                name = storage.save(f"customers/invoice-{uuid4().hex}.jpg", ContentFile(preview))
+                uploaded_invoice = (storage, name)
+                customer.invoice_image = name
             customer.save()
+            if preview and previous_invoice and previous_invoice != customer.invoice_image.name:
+                storage = customer.invoice_image.storage
+                transaction.on_commit(lambda: storage.delete(previous_invoice), robust=True)
             _log(customer, "checked", version=customer.link_version, link_changed=changed, **log)
-    except IntegrityError:
-        # Two counters submitted the same purchase at the same moment.
-        raise ValidationError({"imei": ["This purchase is already registered."]})
+    except Exception as exc:
+        if uploaded_invoice:
+            storage, name = uploaded_invoice
+            storage.delete(name)
+        if isinstance(exc, IntegrityError):
+            # Two counters submitted the same purchase at the same moment.
+            raise ValidationError({"imei": ["This purchase is already registered."]}) from exc
+        raise
     return customer
 
 
@@ -526,7 +544,7 @@ SCAN_SECONDS = 30 * 60
 
 class ManagerScan(APIView):
     """Reads an uploaded invoice (photo or PDF) on the server and keeps the
-    text briefly for the check. The file itself is never stored."""
+    text and compressed preview briefly for the check."""
 
     authentication_classes = []
     permission_classes = [AllowAny]
@@ -534,7 +552,7 @@ class ManagerScan(APIView):
     parser_classes = [MultiPartParser, FormParser]
 
     def post(self, request):
-        from .extract import MAX_BYTES, UnreadableInvoice, extract_text
+        from .extract import MAX_BYTES, UnreadableInvoice, extract_text, invoice_preview
 
         upload = request.FILES.get("invoice")
         if upload is None:
@@ -547,19 +565,26 @@ class ManagerScan(APIView):
                 status=status.HTTP_503_SERVICE_UNAVAILABLE, headers={"Retry-After": "5"},
             )
         try:
-            text = extract_text(upload.read(MAX_BYTES + 1), upload.name)
+            raw = upload.read(MAX_BYTES + 1)
+            text = extract_text(raw, upload.name)
+            from .serializers import NOT_AN_INVOICE, looks_like_invoice
+
+            if not looks_like_invoice(text):
+                raise UnreadableInvoice(NOT_AN_INVOICE)
+            preview = invoice_preview(raw)
         except UnreadableInvoice as exc:
             return Response({"invoice": [str(exc)]}, status=400)
         finally:
             _OCR_WORK.release()
-        from .serializers import NOT_AN_INVOICE, looks_like_invoice
-
-        # A QR poster or a photo of the box: say so now, not at Check.
-        if not looks_like_invoice(text):
-            return Response({"invoice": [NOT_AN_INVOICE]}, status=400)
         scan = secrets.token_urlsafe(16)
-        cache.set(f"invoice-scan:{scan}", text, SCAN_SECONDS)
-        return Response({"scan": scan, "text": text})
+        cache.set_many({
+            f"invoice-scan:{scan}": text,
+            f"invoice-preview:{scan}": preview,
+        }, SCAN_SECONDS)
+        return Response(
+            {"scan": scan, "text": text},
+            headers={"Cache-Control": "private, no-store"},
+        )
 
 
 class ManagerSent(APIView):
@@ -1473,6 +1498,22 @@ class LockoutLoginView(LoginView):
     def form_valid(self, form):
         cache.delete_many(self._keys())
         return super().form_valid(form)
+
+
+@require_safe
+def invoice_media(request, filename):
+    """Serve an invoice preview to authenticated staff only."""
+    if not (request.user.is_authenticated and request.user.is_staff):
+        response = HttpResponse(status=403)
+    else:
+        try:
+            response = FileResponse(default_storage.open(f"customers/{filename}", "rb"), content_type="image/jpeg")
+        except FileNotFoundError:
+            response = HttpResponse(status=404)
+    response["Cache-Control"] = "private, no-store, max-age=0"
+    response["X-Content-Type-Options"] = "nosniff"
+    response["Vary"] = "Cookie"
+    return response
 
 
 @require_safe

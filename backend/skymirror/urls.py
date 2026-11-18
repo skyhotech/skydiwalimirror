@@ -1,16 +1,17 @@
 from django.conf import settings
 from django.conf.urls.static import static
 from django.contrib import admin
-from django.urls import include, path
+from django.urls import include, path, re_path
 from django.views.generic import RedirectView
 
 from mirrors.urls import api_urlpatterns, dashboard_urlpatterns
-from mirrors.views import customer_media
+from mirrors.views import customer_media, invoice_media
 
 urlpatterns = [
     path("", RedirectView.as_view(url="/sky/mirror/admin/")),
     path("sky/mirror/admin/", include(dashboard_urlpatterns)),
     path("api/", include(api_urlpatterns)),
+    re_path(r"^media/customers/(?P<filename>invoice-[a-f0-9]{32}\.jpg)$", invoice_media, name="invoice-media"),
     path("media/customers/<path:filename>", customer_media, name="customer-media"),
 ] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
 

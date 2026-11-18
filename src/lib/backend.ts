@@ -150,12 +150,12 @@ export async function fetchBranch(): Promise<
   }
   return null;
 }
-async function postJson<T>(path: string, body: unknown): Promise<T> {
+async function postJson<T>(path: string, body: unknown, api = API): Promise<T> {
   if (!navigator.onLine) throw new ApiError(ERRORS.offline);
   let res: Response;
   try {
     const form = body instanceof FormData;
-    res = await fetch(`${API}${path}`, {
+    res = await fetch(`${api}${path}`, {
       method: "POST",
       headers: form ? undefined : { "Content-Type": "application/json" },
       body: form ? body : JSON.stringify(body),
@@ -382,12 +382,14 @@ async function asJpeg(blob: Blob, maxSide = Infinity): Promise<Blob> {
   }
 }
 
+// Use the Vercel proxy for intake to avoid a separate browser TLS and CORS handshake.
+const INTAKE_API = onVercel && !import.meta.env.VITE_API_URL ? "/api" : API;
 export type BranchOption = { slug: string; name: string; phone?: string };
 
 export async function fetchManagerBranches() {
   let res: Response;
   try {
-    res = await fetch(`${API}/manager/branches/`, {
+    res = await fetch(`${INTAKE_API}/manager/branches/`, {
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
   } catch {
@@ -405,7 +407,7 @@ export async function fetchManagerBranches() {
 
 const UPLOAD_SIDE = 2600;
 async function shrinkPhoto(file: File): Promise<Blob> {
-  if (file.type === "application/pdf" || file.size < 1_500_000) return file;
+  if (file.type === "application/pdf" || /\.pdf$/i.test(file.name) || file.size < 1_500_000) return file;
   try {
     const bitmap = await createImageBitmap(file);
     const scale = Math.min(1, UPLOAD_SIDE / Math.max(bitmap.width, bitmap.height));
@@ -425,13 +427,13 @@ async function shrinkPhoto(file: File): Promise<Blob> {
 export async function scanInvoice(file: File | Blob, name = "invoice") {
   const form = new FormData();
   const upload = file instanceof File ? await shrinkPhoto(file) : file;
-  const pdf = upload.type === "application/pdf";
+  const pdf = upload.type === "application/pdf" || (file instanceof File && /\.pdf$/i.test(file.name));
   form.append("invoice", upload, pdf ? "invoice.pdf" : `${name}.jpg`);
-  return postJson<{ scan: string; text: string }>("/manager/scan/", form);
+  return postJson<{ scan: string; text: string }>("/manager/scan/", form, upload.size > 4_000_000 ? API : INTAKE_API);
 }
 
 export const checkPurchase = (form: FormData) =>
-  postJson<{ phone: string; link: string }>("/manager/check/", form);
+  postJson<{ phone: string; link: string }>("/manager/check/", form, INTAKE_API);
 
 export function trackSent(phone: string) {
   void fetch(`${API}/manager/sent/`, {

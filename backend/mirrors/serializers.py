@@ -1,3 +1,4 @@
+from decimal import Decimal
 from pathlib import Path
 from django.conf import settings
 from rest_framework import serializers
@@ -484,6 +485,41 @@ def invoice_missing(text, data):
     return missing
 
 
+def _preview_invoice_fields(text, data):
+    """Cross-check the typed fields against legible labels on a new scan."""
+    errors = {}
+    total = re.search(r"^.*?\b(?:net|grand)\s+total\b([^\n]*)", text, re.I | re.M)
+    if total:
+        amounts = re.findall(r"(?<![\d.])\d[\d,]*\.\d{2}(?![\d.])", total[1])
+        if amounts and Decimal(amounts[-1].replace(",", "")) != data["bill_value"]:
+            errors["bill_value"] = "The bill value must match the invoice total."
+    billed = re.search(r"billed\s*to[,: \t]*(.*?)\n([^\n]+)", text, re.I)
+    if billed:
+        printed_name = re.split(r"shipped\s*to", billed[1], flags=re.I)[0].strip() or billed[2].strip()
+        if _compact(printed_name) and _compact(data["name"]) != _compact(printed_name) and not _printed(printed_name, [], data["name"]):
+            errors["name"] = "The customer name must match the invoice."
+        issuer = text[:billed.start()]
+        store_numbers = {
+            re.sub(r"\D", "", number)
+            for number in re.findall(r"(?<!\d)([6-9]\d{4}[ -]?\d{5})(?!\d)", issuer)
+        }
+        matching_branches = {
+            slug
+            for slug, number in Branch.objects.filter(is_active=True).values_list("slug", "phone")
+            if re.sub(r"\D", "", number or "")[-10:] in store_numbers
+        }
+        if matching_branches and data["branch"] not in matching_branches:
+            errors["branch"] = "Select the branch that issued the invoice."
+        buyer = re.split(r"particulars|place\s*of\s*supply", text[billed.start():], maxsplit=1, flags=re.I)[0]
+        emails = {email.lower() for email in re.findall(r"[\w.+-]+@[\w.-]+\.[a-z]{2,}", buyer, re.I)}
+        if data.get("email") and emails and data["email"].lower() not in emails:
+            errors["email"] = "The mail ID must match the invoice or be left blank."
+    if not _printed(text, [], data["product_details"]):
+        errors["product_details"] = "The product details must match the invoice."
+    if errors:
+        raise serializers.ValidationError(errors)
+
+
 NOT_AN_INVOICE = (
     "This doesn't look like a SKY invoice. Please upload the invoice PDF or a "
     "clear photo of the whole bill."
@@ -558,6 +594,10 @@ class CustomerIntakeSerializer(serializers.Serializer):
             if hints:
                 message += f" The bill shows {'; '.join(hints)}."
             raise serializers.ValidationError({"invoice_image": [message]})
+        preview = cache.get(f"invoice-preview:{data['scan']}")
+        if preview:
+            _preview_invoice_fields(text, data)
+            data["invoice_preview"] = preview
         return data
 
 

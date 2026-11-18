@@ -136,52 +136,61 @@ export function ManagerIntake() {
     }
     return scan.current.result;
   }
+  const selection = useRef(0);
   async function pick(file: File | null) {
+    const current = ++selection.current;
     setImage(file);
+    setForm(EMPTY);
+    setHasImei(false);
     setLink("");
     setError("");
     if (!file) return;
     setFilling(true);
     try {
       const { text } = await readFile(file);
+      if (current !== selection.current) return;
       const found = extractInvoice(text);
       const phoneImeis = luhnImeis(text);
       setHasImei(phoneImeis.length > 0);
-      // Fills gaps only: what the manager typed stays.
-      setForm((f) => ({
-        name: f.name || found.name || "",
-        phone: f.phone || found.phone || "",
-        email: f.email,
-        product: f.product || found.product || "",
-        imei: phoneImeis.length ? f.imei || phoneImeis[0] : "",
-        invoice: f.invoice || found.invoice || "",
-        // The bill value is always typed by the manager.
-        bill: f.bill,
-      }));
+      setForm({
+        name: found.name ?? "",
+        phone: found.phone ?? "",
+        email: found.email ?? "",
+        product: found.product ?? "",
+        imei: phoneImeis[0] ?? "",
+        invoice: found.invoice ?? "",
+        bill: found.bill ?? "",
+      });
+      const store = found.storePhone
+        ? branches.find((b) => b.phone?.replace(/\D/g, "").slice(-10) === found.storePhone)
+        : undefined;
+      setBranch((previous) => store ?? previous ?? branches.find((b) => b.slug === BRANCH) ?? null);
     } catch (e) {
+      if (current !== selection.current) return;
       scan.current = null;
       fail((e as Error).message);
     } finally {
-      setFilling(false);
+      if (current === selection.current) setFilling(false);
     }
   }
   function problem() {
     if (!form.name.trim()) return "Enter the customer name.";
     if (!PHONE_PATTERN.test(form.phone))
       return "Enter a valid 10-digit mobile number.";
+    if (form.email.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim())) return "Enter a valid mail ID or leave it blank.";
     if (!form.product.trim()) return "Enter the product details.";
     if (hasImei && !imeiValid(form.imei)) return "This IMEI number is not valid.";
     if (!form.invoice.trim()) return "Enter the invoice number.";
     if (!(Number(form.bill) >= 1)) return "Enter the bill value.";
     if (!branch) return "Select a branch.";
-    if (!image) return "Upload the invoice image.";
-    if (!image.type.startsWith("image/") && image.type !== "application/pdf")
+    if (!image) return "Upload the invoice PDF or image.";
+    if (!image.type.startsWith("image/") && image.type !== "application/pdf" && !/\.pdf$/i.test(image.name))
       return "The invoice must be an image or PDF.";
     return "";
   }
   async function check(e: React.FormEvent) {
     e.preventDefault();
-    if (busy) return;
+    if (busy || filling) return;
     const wrong = problem();
     if (wrong) return fail(`${MISMATCH}: ${wrong}`);
     if (Number(form.bill) < MIN_BILL) {
@@ -191,7 +200,7 @@ export function ManagerIntake() {
     setBusy(true);
     setError("");
     try {
-      // Read here and dropped: only the text is sent to the server.
+      // Reuse the original extraction so checks match the attached invoice.
       setStage("Scanning invoice…");
       const { scan: scanId, sharpness } = await readFile(image!).catch((e: Error) => {
         scan.current = null;
@@ -301,10 +310,7 @@ export function ManagerIntake() {
           <div className="phone-logo">
             <img src={skyLogo} alt="SKY Mobile & Electronics" />
           </div>
-          <h1 className="phone-title manager-title">
-            <span className="manager-title-celebrate">Celebrate</span>
-            <span className="manager-title-event">Karthigai Deepam with SKY</span>
-          </h1>
+          <h1 className="phone-title">Customer details</h1>
           {field("name", "Customer name", { maxLength: 80, autoComplete: "off" })}
           <label htmlFor="m-phone">Customer contact number</label>
           <div className="phone-field">
@@ -366,8 +372,8 @@ export function ManagerIntake() {
             min: 1,
             step: "0.01",
           })}
-          {!BRANCH && <label htmlFor="m-branch">Branch</label>}
-          <div className="manager-branch" style={BRANCH ? { display: "none" } : undefined}>
+          <label htmlFor="m-branch">Branch</label>
+          <div className="manager-branch">
             <input
               id="m-branch"
               className="manager-input"
@@ -417,27 +423,23 @@ export function ManagerIntake() {
               </ul>
             )}
           </div>
-          <label>Invoice image</label>
+          <label htmlFor="m-image">Invoice PDF</label>
           <div className="manager-row">
-            {[
-              { label: "Upload image / PDF", capture: undefined, Icon: Upload },
-            ].map(({ label, capture, Icon }) => (
-              <label key={label} className="manager-scan manager-pick">
-                <Icon size={18} aria-hidden="true" />
-                {label}
-                <input
-                  id={capture ? "m-camera" : "m-image"}
-                  type="file"
-                  accept={capture ? "image/*" : "image/*,application/pdf"}
-                  capture={capture}
-                  hidden
-                  onChange={(e) => {
-                    void pick(e.target.files?.[0] ?? null);
-                    e.target.value = "";
-                  }}
-                />
-              </label>
-            ))}
+            <label className="manager-scan manager-pick">
+              <Upload size={18} aria-hidden="true" />
+              Upload image / PDF
+              <input
+                id="m-image"
+                type="file"
+                accept="application/pdf,.pdf,image/*"
+                disabled={busy}
+                hidden
+                onChange={(e) => {
+                  if (e.target.files?.[0]) void pick(e.target.files[0]);
+                  e.target.value = "";
+                }}
+              />
+            </label>
           </div>
           {image && (
             <p className="phone-help" role="status">
