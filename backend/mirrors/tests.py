@@ -345,6 +345,30 @@ class BranchFlowTests(TestCase):
         })
         self.assertEqual(again.status_code, 409)
 
+    def test_admin_loads_private_images_from_server_storage(self):
+        customer = Customer.objects.create(session="media-route", spin_token="sample-owner-token")
+        customer.poster_thumb.save("thumb.jpg", jpeg("thumb.jpg"))
+        customer.whatsapp_proof.save("proof.jpg", jpeg("proof.jpg"))
+
+        for field in (customer.poster_thumb, customer.whatsapp_proof):
+            self.assertEqual(self.client.get(field.url).status_code, 403)
+        bearer = {"HTTP_AUTHORIZATION": f"Bearer {customer.spin_token}"}
+        response = self.client.get(customer.poster_thumb.url, **bearer)
+        self.addCleanup(response.close)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.client.get(customer.whatsapp_proof.url, **bearer).status_code, 403)
+
+        self.client.force_login(self.staff)
+        detail = self.client.get(f"/api/admin/customers/{customer.pk}/").json()
+        for name, field in (("poster_thumb", customer.poster_thumb), ("whatsapp_proof", customer.whatsapp_proof)):
+            self.assertEqual(detail[name], field.url)
+            response = self.client.get(detail[name])
+            self.addCleanup(response.close)
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.headers["Content-Type"], "image/jpeg")
+            self.assertIn("no-store", response.headers["Cache-Control"])
+            self.assertTrue(b"".join(response.streaming_content).startswith(b"\xff\xd8"))
+
     def test_customer_period_filters_use_indian_calendar_dates(self):
         day = datetime(2026, 11, 18, 18, 30, tzinfo=utc.utc)  # Nov 19 starts in India
         deepam = Mirror.objects.create(name="Karthigai Deepam")
