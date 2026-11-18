@@ -840,7 +840,7 @@ class CustomerViewSet(
         return CustomerDetailSerializer if self.action == "retrieve" else CustomerSerializer
 
     def get_queryset(self):
-        qs = Customer.objects.select_related("mirror", "repeat_of").prefetch_related("events")
+        qs = Customer.objects.select_related("mirror", "branch", "repeat_of").prefetch_related("events")
         if self.request.query_params.get("abandoned"):
             qs = _link_unsent(qs)
         if self.request.query_params.get("video"):
@@ -850,6 +850,12 @@ class CustomerViewSet(
             qs = qs.filter(events__kind__in=CustomerEvent.SHARE_KINDS).distinct()
         elif reached:
             qs = qs.filter(events__kind=reached).distinct()
+        # ?season=karthigai → only Karthigai Deepam mirror; =other → everything else
+        season = self.request.query_params.get("season")
+        if season == "karthigai":
+            qs = qs.filter(mirror__slug="karthigai-deepam")
+        elif season == "other":
+            qs = qs.exclude(mirror__slug="karthigai-deepam")
         mirror = self.request.query_params.get("mirror")
         if mirror:
             qs = qs.filter(mirror_id=_positive_id(mirror, "mirror"))
@@ -1239,7 +1245,20 @@ def full_backup(request):
 @api_view(["GET"])
 @permission_classes([IsAdminUser])
 def stats(request):
-    data = _customer_stats(Customer.objects.all())
+    season = request.query_params.get("season")
+    if season == "karthigai":
+        customers = Customer.objects.filter(mirror__slug="karthigai-deepam")
+    elif season == "other":
+        customers = Customer.objects.exclude(mirror__slug="karthigai-deepam")
+    else:
+        customers = Customer.objects.all()
+
+    cache_key = f"admin_stats:{season or 'all'}"
+    cached = cache.get(cache_key)
+    if cached:
+        return Response(cached)
+
+    data = _customer_stats(customers)
     data.update(
         **Mirror.objects.aggregate(mirrors=Count("id"), active_mirrors=Count("id", filter=Q(is_active=True))),
         branches=Branch.objects.count(),
@@ -1255,7 +1274,9 @@ def stats(request):
         top_branches=list(
             Branch.objects.annotate(n=Count("customers")).order_by("-n", "name").values("id", "name", "n")
         ),
+        season=season or "all",
     )
+    cache.set(cache_key, data, 10)
     return Response(data)
 
 
