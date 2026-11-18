@@ -1288,12 +1288,13 @@
     siForm.id.value = "";
     $("#si-save").textContent = "Add gift";
     $("#si-cancel").hidden = true;
-    siPicture = "";
+    siClearPicture();
     siDraw();
   }
   let siItems = [];
   const SI_COLORS = ["#d22856", "#d6a447", "#7a1631", "#f3cf7a"];
   function siEdit(i) {
+    siClearPicture();
     siForm.id.value = i.id;
     siForm.name.value = i.name;
     siForm.min_bill.value = Number(i.min_bill);
@@ -1307,6 +1308,11 @@
   }
   // The saved gifts with the form's unsaved changes on top, for the live wheel.
   let siPicture = "";
+  function siClearPicture() {
+    siForm.image.value = "";
+    if (siPicture) URL.revokeObjectURL(siPicture);
+    siPicture = "";
+  }
   function siDraft() {
     const id = siForm.id.value, name = siForm.name.value.trim();
     if (!id && !name) return siItems;
@@ -1370,7 +1376,7 @@
   });
   $("#si-new").addEventListener("click", () => { siReset(); siForm.name.focus(); });
   async function loadSpinItems() {
-    siItems = await api("spin-items/");
+    siItems = await api("spin-items/", { fresh: true, loader: true });
     siDraw();
     const list = $("#si-list");
     list.innerHTML = siItems.length ? "" : `<div class="empty-note">No gifts yet. Add the first one above.</div>`;
@@ -1403,7 +1409,9 @@
     if (siForm.image.files[0]) body.append("image", siForm.image.files[0]);
     try {
       await api(id ? `spin-items/${id}/` : "spin-items/", { method: id ? "PATCH" : "POST", body });
-      toast("Saved"); siReset(); loadSpinItems();
+      toast(id ? "Gift saved" : "Gift added");
+      siReset();
+      await loadSpinItems();
     } catch (err) { toast(err.message, true); }
   });
 
