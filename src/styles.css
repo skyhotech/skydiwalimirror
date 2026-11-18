@@ -2947,6 +2947,19 @@ body {
   color: transparent;
   animation: phone-shimmer 3.5s linear infinite;
 }
+.manager-title {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.25;
+}
+.manager-title-celebrate {
+  font-size: clamp(26px, 7vw, 32px);
+  font-weight: 700;
+}
+.manager-title-event {
+  font-size: clamp(16px, 4.5vw, 20px);
+  font-weight: 400;
+}
 .phone-card > p {
   margin: 0 0 18px;
   font-size: clamp(14px, 4vw, 15px);

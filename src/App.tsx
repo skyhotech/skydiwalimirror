@@ -12,7 +12,8 @@ const ManagerIntake = lazy(() =>
   import("./components/ManagerIntake").then((m) => ({ default: m.ManagerIntake }))
 );
 
-const IS_STAFF = new URLSearchParams(window.location.search).has("staff");
+const _params = new URLSearchParams(window.location.search);
+const IS_STAFF = _params.has("staff") || _params.has("branch");
 
 export default function App() {
   const step = useStudio((s) => s.step);

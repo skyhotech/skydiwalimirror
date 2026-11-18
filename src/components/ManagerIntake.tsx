@@ -301,7 +301,10 @@ export function ManagerIntake() {
           <div className="phone-logo">
             <img src={skyLogo} alt="SKY Mobile & Electronics" />
           </div>
-          <h1 className="phone-title">Customer details</h1>
+          <h1 className="phone-title manager-title">
+            <span className="manager-title-celebrate">Celebrate</span>
+            <span className="manager-title-event">Karthigai Deepam with SKY</span>
+          </h1>
           {field("name", "Customer name", { maxLength: 80, autoComplete: "off" })}
           <label htmlFor="m-phone">Customer contact number</label>
           <div className="phone-field">
