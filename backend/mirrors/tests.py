@@ -55,7 +55,7 @@ def jpeg(name="selfie.jpg"):
     return SimpleUploadedFile(name, out.getvalue(), content_type="image/jpeg")
 
 
-@override_settings(MEDIA_ROOT=MEDIA, STUDIO_URL="https://studio.example")
+@override_settings(MEDIA_ROOT=MEDIA, STUDIO_URL="https://studio.example", MATCH_INVOICE_DETAILS=True)
 class BranchFlowTests(TestCase):
     @classmethod
     def tearDownClass(cls):
@@ -291,6 +291,26 @@ class BranchFlowTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.headers["Content-Type"], "image/jpeg")
         self.assertIn("no-store", response.headers["Cache-Control"])
+
+    @override_settings(MATCH_INVOICE_DETAILS=False)
+    def test_submitted_corrections_are_saved_while_matching_is_paused(self):
+        pdf = SimpleUploadedFile(
+            "bill.pdf", text_pdf(bill_text("9845011111", IMEI)), "application/pdf"
+        )
+        scan = self.client.post("/api/manager/scan/", {"invoice": pdf})
+        self.assertEqual(scan.status_code, 200)
+        response = self.client.post("/api/manager/check/", {
+            "name": "Corrected Name", "phone": "9845011111",
+            "product_details": "Corrected product", "invoice_number": "CORRECTED001",
+            "bill_value": "50000.00", "branch": "anna-nagar", "blur_score": 200,
+            "scan": scan.json()["scan"],
+        })
+        self.assertEqual(response.status_code, 200, response.data)
+        customer = Customer.objects.get(phone="9845011111")
+        self.assertEqual(customer.invoice_number, "CORRECTED001")
+        self.assertIsNone(customer.imei)
+        self.assertEqual(customer.bill_value, 50000)
+        self.assertLess(customer.invoice_image.size, 200_000)
 
     def test_an_unknown_scan_is_refused(self):
         res = self.check(scan_override="nope")

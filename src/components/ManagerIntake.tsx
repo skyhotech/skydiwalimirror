@@ -170,7 +170,7 @@ export function ManagerIntake() {
       return "Enter a valid 10-digit mobile number.";
     if (form.email.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim())) return "Enter a valid mail ID or leave it blank.";
     if (!form.product.trim()) return "Enter the product details.";
-    if (hasImei && !imeiValid(form.imei)) return "This IMEI number is not valid.";
+    if (form.imei && !imeiValid(form.imei)) return "This IMEI number is not valid.";
     if (!form.invoice.trim()) return "Enter the invoice number.";
     if (!(Number(form.bill) >= 1)) return "Enter the bill value.";
     if (!image) return "Upload the invoice PDF or image.";

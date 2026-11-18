@@ -580,9 +580,18 @@ class CustomerIntakeSerializer(serializers.Serializer):
                 {"invoice_image": ["Please upload the invoice again."]}
             )
         data["ocr_text"] = text
+        data.setdefault("imei", "")
+        preview = cache.get(f"invoice-preview:{data['scan']}")
+        if preview:
+            data["invoice_preview"] = preview
+
+        # Keep autofill and proof storage active while invoice matching is paused.
+        if not getattr(settings, "MATCH_INVOICE_DETAILS", False):
+            return data
+
         if not invoice_imeis(text):
             data["imei"] = ""  # not a phone: no IMEI to keep or check
-        elif not data.get("imei"):
+        elif not data["imei"]:
             raise serializers.ValidationError({"imei": ["Enter the IMEI shown on the invoice."]})
         if not looks_like_invoice(text):
             raise serializers.ValidationError({"invoice_image": [NOT_AN_INVOICE]})
@@ -594,10 +603,8 @@ class CustomerIntakeSerializer(serializers.Serializer):
             if hints:
                 message += f" The bill shows {'; '.join(hints)}."
             raise serializers.ValidationError({"invoice_image": [message]})
-        preview = cache.get(f"invoice-preview:{data['scan']}")
         if preview:
             _preview_invoice_fields(text, data)
-            data["invoice_preview"] = preview
         return data
 
 

@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-test("the manager form fills a PDF and validates the submitted values", async ({ page }) => {
+test("the manager form fills a PDF and sends the corrected values", async ({ page }) => {
   const line = [
     "TAX INVOICE",
     "Ph: 8667670649",
@@ -19,15 +19,11 @@ test("the manager form fills a PDF and validates the submitted values", async ({
   await page.route("**/api/manager/scan/", (route) => route.fulfill({
     json: { text: line.join("\n"), scan: "invoice-scan-token" },
   }));
-  let checks = 0;
   await page.route("**/api/manager/check/", async (route) => {
-    checks++;
     const body = route.request().postData() ?? "";
     expect(body).toContain("invoice-scan-token");
     expect(body).toContain("ranipet-2");
-    if (checks === 1) {
-      return route.fulfill({ status: 400, json: { bill_value: ["The bill value must match the invoice total."] } });
-    }
+    expect(body).toMatch(/name="bill_value"\r\n\r\n50000\r\n/);
     return route.fulfill({ json: { link: "https://studio.example/?spin=test" } });
   });
 
@@ -59,9 +55,6 @@ test("the manager form fills a PDF and validates the submitted values", async ({
   await expect(page.getByRole("combobox", { name: "Branch" })).toHaveCount(0);
 
   await page.getByLabel("Bill value (₹)").fill("50000");
-  await page.getByRole("button", { name: "Check", exact: true }).click();
-  await expect(page.getByRole("alert")).toContainText("The bill value must match the invoice total.");
-  await page.getByLabel("Bill value (₹)").fill("24999");
   await page.getByRole("button", { name: "Check", exact: true }).click();
   await expect(page.getByRole("button", { name: "Send link in WhatsApp" })).toBeVisible();
 });
