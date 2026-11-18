@@ -870,6 +870,12 @@ class CustomerViewSet(
                 Q(name__icontains=search) | Q(phone__icontains=search)
                 | Q(imei__icontains=search) | Q(invoice_number__icontains=search)
             )
+        date_from = self.request.query_params.get("date_from")
+        date_to = self.request.query_params.get("date_to")
+        if date_from:
+            qs = qs.filter(created_at__date__gte=date_from)
+        if date_to:
+            qs = qs.filter(created_at__date__lte=date_to)
         return qs
 
     def perform_destroy(self, instance):

@@ -40,6 +40,13 @@
   /* Mirror badge on customer cards */
   .mirror-badge { display: inline-block; font-size: 11px; padding: 2px 7px; border-radius: 99px; background: #f0e8da; color: #7a5a30; font-weight: 600; white-space: nowrap; }
   .mirror-badge.kd { background: #fff4dc; color: #7a4a00; border: 1px solid #e8c96a; }
+  /* Date filter bar */
+  .date-bar { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+  .dqbtn { font-size: 13px; padding: 5px 11px; border: 1px solid var(--line); background: var(--panel); border-radius: 8px; cursor: pointer; color: var(--muted); white-space: nowrap; }
+  .dqbtn.active { background: var(--ink); color: #fff; border-color: var(--ink); }
+  .date-range { display: flex; gap: 6px; align-items: center; }
+  .date-range input[type=date] { font-size: 13px; padding: 5px 8px; border: 1px solid var(--line); border-radius: 8px; background: #fff; color: var(--ink); }
+  .date-sep { font-size: 12px; color: var(--muted); }
   .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
   .toolbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; gap: 10px; flex-wrap: wrap; }
   .toolbar h2 { margin: 0; }
@@ -560,7 +567,23 @@
     </section>
     <!-- Video reviews -->
     <section id="view-video-reviews" hidden>
-      <div class="toolbar"><h2>Video reviews</h2><a class="btn" id="vr-export" href="/api/admin/customers/export/?video=1" download>Export CSV</a></div>
+      <div class="toolbar">
+        <h2>Video reviews</h2>
+        <div class="row">
+          <div class="date-bar">
+            <button class="dqbtn" id="vr-today">Today</button>
+            <button class="dqbtn" id="vr-week">This week</button>
+            <button class="dqbtn" id="vr-month">This month</button>
+            <div class="date-range">
+              <input type="date" id="vr-from" title="From date">
+              <span class="date-sep">→</span>
+              <input type="date" id="vr-to" title="To date">
+            </div>
+            <button class="dqbtn" id="vr-clear-date" style="display:none">✕ Clear</button>
+          </div>
+          <a class="btn" id="vr-export" href="/api/admin/customers/export/?video=1" download>Export CSV</a>
+        </div>
+      </div>
       <p class="hint">Customers who will post a product video review on Instagram for the iPhone 15 contest. Purchases of ₹10,000 or more qualify.</p>
       <div class="cgrid" id="vr-list"></div>
     </section>
@@ -626,6 +649,17 @@
             <button class="stab active" data-season="">All</button>
             <button class="stab kd" data-season="karthigai">🪔 Karthigai Deepam</button>
             <button class="stab" data-season="other">Other</button>
+          </div>
+          <div class="date-bar">
+            <button class="dqbtn" id="c-today">Today</button>
+            <button class="dqbtn" id="c-week">This week</button>
+            <button class="dqbtn" id="c-month">This month</button>
+            <div class="date-range">
+              <input type="date" id="c-from" title="From date">
+              <span class="date-sep">→</span>
+              <input type="date" id="c-to" title="To date">
+            </div>
+            <button class="dqbtn" id="c-clear-date" style="display:none">✕ Clear</button>
           </div>
           <select id="c-status"><option value="">All customers</option><option value="1">Abandoned</option></select>
           <input id="c-q" placeholder="Search name, phone, IMEI or invoice">
@@ -1061,9 +1095,51 @@
   $("#sh-wa-filter").addEventListener("change", () => { shPage.whatsapp = 1; loadSharers("whatsapp").catch((e) => toast(e.message, true)); });
 
   // ---------------- Video reviews ----------------
+  // ---- Shared date filter logic ----
+  function todayISO() { return new Date().toLocaleDateString("sv"); } // "sv" gives YYYY-MM-DD
+  function weekStartISO() { const d = new Date(); d.setDate(d.getDate() - d.getDay()); return d.toLocaleDateString("sv"); }
+  function monthStartISO() { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-01`; }
+
+  function setupDateFilter({ prefix, onApply }) {
+    const todayBtn = $(`#${prefix}-today`), weekBtn = $(`#${prefix}-week`), monthBtn = $(`#${prefix}-month`);
+    const fromIn = $(`#${prefix}-from`), toIn = $(`#${prefix}-to`), clearBtn = $(`#${prefix}-clear-date`);
+    let active = null;
+
+    function setQuick(preset) {
+      active = preset;
+      const today = todayISO();
+      fromIn.value = preset === "today" ? today : preset === "week" ? weekStartISO() : monthStartISO();
+      toIn.value = today;
+      for (const b of [todayBtn, weekBtn, monthBtn]) b.classList.toggle("active", b === { today: todayBtn, week: weekBtn, month: monthBtn }[preset]);
+      clearBtn.style.display = "inline-block";
+      onApply();
+    }
+    function clear() {
+      active = null; fromIn.value = ""; toIn.value = "";
+      for (const b of [todayBtn, weekBtn, monthBtn]) b.classList.remove("active");
+      clearBtn.style.display = "none";
+      onApply();
+    }
+    todayBtn.addEventListener("click", () => setQuick("today"));
+    weekBtn.addEventListener("click", () => setQuick("week"));
+    monthBtn.addEventListener("click", () => setQuick("month"));
+    clearBtn.addEventListener("click", clear);
+    fromIn.addEventListener("change", () => { active = null; for (const b of [todayBtn, weekBtn, monthBtn]) b.classList.remove("active"); clearBtn.style.display = fromIn.value || toIn.value ? "inline-block" : "none"; onApply(); });
+    toIn.addEventListener("change", () => { active = null; for (const b of [todayBtn, weekBtn, monthBtn]) b.classList.remove("active"); clearBtn.style.display = fromIn.value || toIn.value ? "inline-block" : "none"; onApply(); });
+    return { from: () => fromIn.value, to: () => toIn.value };
+  }
+
+  const cDateFilter = setupDateFilter({ prefix: "c", onApply: () => loadCustomers(true).catch((e) => toast(e.message, true)) });
+  const vrDateFilter = setupDateFilter({ prefix: "vr", onApply: () => { vrPage = 1; loadVideoReviews().catch((e) => toast(e.message, true)); } });
+
   let vrPage = 1;
   async function loadVideoReviews() {
-    const data = await api(`customers/?video=1&page=${vrPage}&page_size=${PER_PAGE}`);
+    const params = new URLSearchParams({ video: 1, page: vrPage, page_size: PER_PAGE });
+    if (vrDateFilter.from()) params.set("date_from", vrDateFilter.from());
+    if (vrDateFilter.to()) params.set("date_to", vrDateFilter.to());
+    const expBtn = $("#vr-export");
+    if (expBtn) expBtn.href = "/api/admin/customers/export/?" + params;
+    const data = await api(`customers/?` + params);
     $("#nav-video").textContent = data.count;
     const list = $("#vr-list");
     list.innerHTML = data.results.length ? "" : `<div class="empty-note">No video review sign-ups yet.</div>`;
@@ -1490,6 +1566,8 @@
     if ($("#c-branch").value) params.set("branch", $("#c-branch").value);
     if ($("#c-status").value) params.set("abandoned", "1");
     if (activeSeason) params.set("season", activeSeason);
+    if (cDateFilter.from()) params.set("date_from", cDateFilter.from());
+    if (cDateFilter.to()) params.set("date_to", cDateFilter.to());
     // Update export link to include current filters.
     const exportUrl = "/api/admin/customers/export/?" + params;
     const expBtn = $("#c-export-btn");
