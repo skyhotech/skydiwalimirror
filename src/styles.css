@@ -3125,6 +3125,81 @@ body {
     transform: translateX(100%);
   }
 }
+
+/* ── Vilakku (Karthigai Deepam lamp) ──────────────────────── */
+.vilakku-wrap {
+  display: flex;
+  justify-content: center;
+  margin: 4px 0 8px;
+  filter: drop-shadow(0 0 12px rgba(255, 160, 0, 0.55));
+}
+.vilakku {
+  width: 72px;
+  height: auto;
+}
+.vilakku-halo {
+  animation: vilakku-halo 1.6s ease-in-out infinite alternate;
+  transform-origin: 40px 34px;
+}
+.vilakku-flame-outer {
+  animation: vilakku-flicker-outer 0.9s ease-in-out infinite alternate;
+  transform-origin: 40px 44px;
+}
+.vilakku-flame-mid {
+  animation: vilakku-flicker-mid 0.7s ease-in-out infinite alternate;
+  transform-origin: 40px 42px;
+}
+.vilakku-flame-inner {
+  animation: vilakku-flicker-inner 0.5s ease-in-out infinite alternate;
+  transform-origin: 40px 38px;
+}
+.vspark {
+  animation: vilakku-spark 2.4s ease-in-out infinite;
+}
+.vspark-1 { animation-delay: 0s; }
+.vspark-2 { animation-delay: 0.4s; }
+.vspark-3 { animation-delay: 0.8s; }
+.vspark-4 { animation-delay: 1.2s; }
+.vspark-5 { animation-delay: 1.6s; }
+.vspark-6 { animation-delay: 2.0s; }
+
+@keyframes vilakku-halo {
+  from { opacity: 0.4; }
+  to   { opacity: 0.9; }
+}
+@keyframes vilakku-flicker-outer {
+  from { transform: scaleX(1) skewX(0deg); opacity: 1; }
+  to   { transform: scaleX(0.88) skewX(4deg); opacity: 0.85; }
+}
+@keyframes vilakku-flicker-mid {
+  from { transform: scaleX(1) skewX(0deg) scaleY(1); }
+  to   { transform: scaleX(0.92) skewX(-3deg) scaleY(0.95); }
+}
+@keyframes vilakku-flicker-inner {
+  from { transform: scaleX(1) scaleY(1); opacity: 1; }
+  to   { transform: scaleX(0.85) scaleY(0.9); opacity: 0.8; }
+}
+@keyframes vilakku-spark {
+  0%   { opacity: 0; transform: translate(0, 0) scale(1); }
+  30%  { opacity: 1; }
+  100% { opacity: 0; transform: translate(var(--sx, 4px), -18px) scale(0.4); }
+}
+.vspark-1 { --sx: -6px; }
+.vspark-2 { --sx: 8px; }
+.vspark-3 { --sx: -10px; }
+.vspark-4 { --sx: 12px; }
+.vspark-5 { --sx: -4px; }
+.vspark-6 { --sx: 6px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .vilakku-halo,
+  .vilakku-flame-outer,
+  .vilakku-flame-mid,
+  .vilakku-flame-inner,
+  .vspark {
+    animation: none !important;
+  }
+}
 @media (prefers-reduced-motion: reduce) {
   .phone-glow,
   .phone-mandala,

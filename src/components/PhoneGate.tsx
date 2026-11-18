@@ -10,6 +10,7 @@ import {
 } from "../lib/backend";
 import { useStudio } from "../lib/store";
 import { Fireworks } from "./Fireworks";
+import { VilakkuLamp } from "./VilakkuLamp";
 const PARTICLES = 18;
 const item = {
   hidden: { opacity: 0, y: 18 },
@@ -141,8 +142,9 @@ export function PhoneGate() {
               )}
             </AnimatePresence>
           </motion.div>
+          <VilakkuLamp />
           <motion.h1 variants={item} className="phone-title">
-            Celebrate Diwali with SKY
+            Celebrate Karthigai Deepam with SKY
           </motion.h1>
           {branch.name && (
             <motion.p variants={item} className="phone-branch">
