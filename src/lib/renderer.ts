@@ -4,10 +4,21 @@ import { frameAsset } from "./frameAssets";
 import { getReward, rewardImage } from "./rewards";
 export const WIDTH = 1080,
   HEIGHT = 1350;
-const heightScale = HEIGHT / MIRROR_DESIGN_HEIGHT;
+export function fitPosterArtwork(width: number, height: number): Rect {
+  const scale = Math.min(WIDTH / width, HEIGHT / height);
+  const w = width * scale, h = height * scale;
+  return { x: (WIDTH - w) / 2, y: (HEIGHT - h) / 2, w, h };
+}
 
-function postRect(rect: Rect): Rect {
-  return { ...rect, y: rect.y * heightScale, h: rect.h * heightScale };
+export function positionOnArtwork(rect: Rect, artwork: Rect): Rect {
+  const xScale = artwork.w / WIDTH;
+  const yScale = artwork.h / MIRROR_DESIGN_HEIGHT;
+  return {
+    x: artwork.x + rect.x * xScale,
+    y: artwork.y + rect.y * yScale,
+    w: rect.w * xScale,
+    h: rect.h * yScale,
+  };
 }
 type Source = HTMLImageElement | HTMLVideoElement | HTMLCanvasElement;
 function size(source: Source) {
@@ -146,7 +157,7 @@ const overlays = new WeakMap<
   HTMLImageElement,
   { key: string; canvas: HTMLCanvasElement }
 >();
-function artworkOverlay(t: Template, image: HTMLImageElement) {
+function artworkOverlay(t: Template, image: HTMLImageElement, artwork: Rect) {
   const key = JSON.stringify([t.id, t.selfie, t.arch]);
   const cached = overlays.get(image);
   if (cached?.key === key) return cached.canvas;
@@ -154,7 +165,7 @@ function artworkOverlay(t: Template, image: HTMLImageElement) {
   c.width = WIDTH;
   c.height = HEIGHT;
   const ctx = c.getContext("2d")!;
-  ctx.drawImage(image, 0, 0, WIDTH, HEIGHT);
+  ctx.drawImage(image, artwork.x, artwork.y, artwork.w, artwork.h);
   // Remove the neutral mirror surface while retaining the original coloured artwork.
   // Preserve the logo, camera badges, bright typography and warm decorative lights.
   const pixels = ctx.getImageData(0, 0, WIDTH, HEIGHT);
@@ -169,16 +180,17 @@ function artworkOverlay(t: Template, image: HTMLImageElement) {
     for (let x = 0; x < WIDTH; x++) {
       const i = (y * WIDTH + x) * 4;
       if (!clip[i + 3]) continue;
-      const designY = y / heightScale;
-      const logo = ((x - 540) / 155) ** 2 + ((designY - 144) / 158) ** 2 < 1;
+      const designX = (x - artwork.x) * WIDTH / artwork.w;
+      const designY = (y - artwork.y) * MIRROR_DESIGN_HEIGHT / artwork.h;
+      const logo = ((designX - 540) / 155) ** 2 + ((designY - 144) / 158) ** 2 < 1;
       const cameraBadge =
         t.id === "golden"
-          ? ((x - 94) / 65) ** 2 + ((designY - 431) / 49) ** 2 < 1
-          : ((x - 110) / 60) ** 2 + ((designY - 568) / 43) ** 2 < 1;
+          ? ((designX - 94) / 65) ** 2 + ((designY - 431) / 49) ** 2 < 1
+          : ((designX - 110) / 60) ** 2 + ((designY - 568) / 43) ** 2 < 1;
       const lantern =
         t.id === "dream" &&
         [270, 804].some(
-          (cx) => ((x - cx) / 48) ** 2 + ((designY - 289) / 85) ** 2 < 1,
+          (cx) => ((designX - cx) / 48) ** 2 + ((designY - 289) / 85) ** 2 < 1,
         );
       if (logo || (t.id !== "dream" && cameraBadge) || lantern) continue;
       const r = pixels.data[i],
@@ -205,12 +217,17 @@ export function renderPoster(
   state: Composition,
 ) {
   const { template, selfie, products, layout, video, mirror } = state;
-  const t = { ...template, selfie: postRect(template.selfie), product: postRect(template.product) };
+  const { image, status } = frameAsset(template);
+  const artwork = fitPosterArtwork(image?.naturalWidth || WIDTH, image?.naturalHeight || HEIGHT);
+  const t = {
+    ...template,
+    selfie: positionOnArtwork(template.selfie, artwork),
+    product: positionOnArtwork(template.product, artwork),
+  };
   ctx.clearRect(0, 0, WIDTH, HEIGHT);
   ctx.fillStyle = t.bg;
   ctx.fillRect(0, 0, WIDTH, HEIGHT);
-  const asset = frameAsset(t);
-  if (asset.image) ctx.drawImage(asset.image, 0, 0, WIDTH, HEIGHT);
+  if (image) ctx.drawImage(image, artwork.x, artwork.y, artwork.w, artwork.h);
   ctx.save();
   mirrorPath(ctx, t);
   ctx.clip();
@@ -219,8 +236,8 @@ export function renderPoster(
   else if (selfie) imageIn(ctx, selfie.image, t.selfie, selfie.adjust, "cover");
   ctx.restore();
   // The Deepam frame has an intentionally clear, unobstructed photo window.
-  if (asset.image && t.id !== DEFAULT_TEMPLATE_ID)
-    ctx.drawImage(artworkOverlay(t, asset.image), 0, 0);
+  if (image && t.id !== DEFAULT_TEMPLATE_ID)
+    ctx.drawImage(artworkOverlay(t, image, artwork), 0, 0);
   if (products.length) {
     ctx.save();
     rounded(ctx, t.product, 24);
@@ -262,12 +279,12 @@ export function renderPoster(
     ctx.restore();
   }
   drawReward(ctx, t, state.reward);
-  if (!asset.image) {
+  if (!image) {
     ctx.fillStyle = "#fff4dc";
     ctx.textAlign = "center";
     ctx.font = "32px Arial";
     ctx.fillText(
-      asset.status === "loading"
+      status === "loading"
         ? "Loading your frame…"
         : "Frame artwork not installed",
       WIDTH / 2,

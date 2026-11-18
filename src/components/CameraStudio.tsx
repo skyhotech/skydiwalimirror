@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import {
   Camera,
   Instagram,
@@ -23,9 +23,9 @@ import {
   looksBlank,
 } from "../lib/images";
 import { instagramCaption, copyCaption } from "../lib/sharing";
-import { renderPoster, WIDTH, HEIGHT } from "../lib/renderer";
-import { frameAsset } from "../lib/frameAssets";
-import { getTemplate, templates, MIRROR_DESIGN_HEIGHT } from "../templates";
+import { renderPoster, WIDTH, HEIGHT, fitPosterArtwork, positionOnArtwork } from "../lib/renderer";
+import { frameAsset, subscribeFrames } from "../lib/frameAssets";
+import { getTemplate, templates } from "../templates";
 import { Poster } from "./Poster";
 import { Templates } from "./Templates";
 import { SpinWheel } from "./SpinWheel";
@@ -124,6 +124,12 @@ export default function CameraStudio() {
       s.products.map((p) => p.label),
     ),
     filename = `SKY-Diwali-${s.template}`;
+  const artworkImage = useSyncExternalStore(subscribeFrames, () => frameAsset(template).image);
+  const productArea = positionOnArtwork(
+    template.product,
+    fitPosterArtwork(artworkImage?.naturalWidth || WIDTH, artworkImage?.naturalHeight || HEIGHT),
+  );
+
   // Only ever called from a tap: phones open the share sheet (and allow the
   // Instagram fallback tab) only straight after one.
   async function post(blob: Blob, text: string) {
@@ -374,18 +380,22 @@ export default function CameraStudio() {
             </div>
           )}
           {product && !completed && (
-            <div
-              className="inline-product-hint"
-              style={{
-                left: `${template.product.x / 10.8}%`,
-                top: `${(template.product.y / MIRROR_DESIGN_HEIGHT) * 100}%`,
-                width: `${template.product.w / 10.8}%`,
-              }}
-            >
-              <Camera size={12} />
-              {camera.ready
-                ? "Point at your purchase"
-                : "Opening product camera…"}
+            <div className="poster-product-overlay">
+              <div className="poster-product-coordinates">
+                <div
+                  className="inline-product-hint"
+                  style={{
+                    left: `${(productArea.x / WIDTH) * 100}%`,
+                    top: `${(productArea.y / HEIGHT) * 100}%`,
+                    width: `${(productArea.w / WIDTH) * 100}%`,
+                  }}
+                >
+                  <Camera size={12} />
+                  {camera.ready
+                    ? "Point at your purchase"
+                    : "Opening product camera…"}
+                </div>
+              </div>
             </div>
           )}
           <button

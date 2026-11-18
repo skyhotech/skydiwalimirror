@@ -71,7 +71,7 @@
   .pill.off { background: #f3eee8; color: var(--muted); }
   .pill.warn { background: #fdecef; color: var(--accent); align-self: flex-start; }
   .editor { display: grid; grid-template-columns: minmax(240px, 380px) 1fr; gap: 20px; }
-  .stage { position: relative; width: 100%; aspect-ratio: 4 / 5; background: #ddd center / 100% 100% no-repeat; border-radius: 12px; overflow: hidden; touch-action: none; user-select: none; }
+  .stage { position: relative; width: min(100%, calc(68vh * var(--artwork-ratio, .8))); aspect-ratio: var(--artwork-ratio, .8); background: #ddd center / contain no-repeat; border-radius: 12px; overflow: hidden; touch-action: none; user-select: none; }
   .stage.empty::after { content: "Upload artwork"; position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); }
   .box { position: absolute; border: 2px dashed; border-radius: 8px; cursor: move; display: flex; align-items: flex-start; justify-content: flex-start; }
   .box span { font-size: 11px; font-weight: 700; padding: 2px 6px; color: #fff; border-radius: 0 0 6px 0; pointer-events: none; }
@@ -427,7 +427,7 @@
                 <div class="box selfie" data-rect="selfie"><span>SELFIE</span><div class="handle"></div></div>
                 <div class="box product" data-rect="product"><span>PRODUCT</span><div class="handle"></div></div>
               </div>
-              <p class="hint" style="margin-top:8px">Drag a box to place it on the theme. Drag the corner dot to resize it.</p>
+              <p class="hint" style="margin-top:8px">Drag the photo boxes to place them on the artwork. Drag the corners to resize them. Exports are 1080 × 1350.</p>
             </div>
             <div class="fields">
               <div class="two">
@@ -435,8 +435,9 @@
                 <label class="f">Slug (id)<input name="slug" maxlength="60" pattern="[-a-zA-Z0-9_]*" placeholder="auto"></label>
               </div>
               <label class="f">Subtitle<input name="subtitle" maxlength="160"></label>
-              <label class="f">Theme artwork (1080 × 1350 recommended)<input name="artwork" type="file" accept="image/*"></label>
-              <fieldset><legend>Selfie area (1080 × 1920 layout grid)</legend>
+              <label class="f">Theme artwork<input name="artwork" type="file" accept="image/jpeg,image/png,image/webp"></label>
+              <p class="hint" id="m-artwork-dimensions" role="status">JPG, PNG or WebP. The preview fits the uploaded artwork.</p>
+              <fieldset><legend>Selfie area (relative to artwork)</legend>
                 <div class="four" data-for="selfie">
                   <label class="f">X<input type="number" data-k="x"></label><label class="f">Y<input type="number" data-k="y"></label>
                   <label class="f">W<input type="number" data-k="w"></label><label class="f">H<input type="number" data-k="h"></label>
@@ -829,6 +830,8 @@
   // ---------------- Mirrors ----------------
   let mirrors = [], current = null, rects = {}, artworkFile = null;
   const form = $("#m-form"), stage = $("#stage");
+  const artworkDimensions = $("#m-artwork-dimensions");
+  let previewRevision = 0, artworkObjectURL = null, artworkPending = false;
   const mirrorVisibility = $("#m-visibility");
 
   async function loadMirrors() {
@@ -897,7 +900,7 @@
     drawBoxes(); renderList();
   }
 
-  function closeEditor() { current = null; $("#m-editor").hidden = true; renderList(); }
+  function closeEditor() { current = null; setStageImage(null); $("#m-editor").hidden = true; renderList(); }
 
   $("#m-new").addEventListener("click", () => {
     current = null; artworkFile = null;
@@ -913,14 +916,45 @@
     drawBoxes(); renderList(); form.elements.namedItem("name").focus();
   });
 
-  function setStageImage(url) {
-    stage.style.backgroundImage = url ? `url("${url}")` : "";
-    stage.classList.toggle("empty", !url);
+  function setStageImage(url, file = null) {
+    const revision = ++previewRevision;
+    if (artworkObjectURL) URL.revokeObjectURL(artworkObjectURL);
+    artworkObjectURL = file ? url : null;
+    artworkPending = Boolean(file);
+    stage.style.backgroundImage = "";
+    stage.style.removeProperty("--artwork-ratio");
+    stage.classList.add("empty");
+    artworkDimensions.textContent = url ? "Reading artwork dimensions…" : "JPG, PNG or WebP. The preview fits the uploaded artwork.";
+    if (!url) return;
+
+    const image = new Image();
+    image.onload = () => {
+      if (revision !== previewRevision) return;
+      artworkPending = false;
+      stage.style.setProperty("--artwork-ratio", image.naturalWidth / image.naturalHeight);
+      stage.style.backgroundImage = `url(${JSON.stringify(url)})`;
+      stage.classList.remove("empty");
+      artworkDimensions.textContent = `${image.naturalWidth} × ${image.naturalHeight} px`;
+    };
+    image.onerror = () => {
+      if (revision !== previewRevision) return;
+      artworkPending = false;
+      if (file) {
+        artworkFile = null;
+        form.artwork.value = "";
+        setStageImage(current?.artwork ?? null);
+        toast("This artwork couldn’t be opened. Choose a JPG, PNG or WebP file.", true);
+      } else {
+        artworkDimensions.textContent = "The artwork preview could not be loaded.";
+      }
+    };
+    image.src = url;
   }
 
   form.artwork.addEventListener("change", () => {
     artworkFile = form.artwork.files[0] || null;
-    if (artworkFile) setStageImage(URL.createObjectURL(artworkFile));
+    if (artworkFile) setStageImage(URL.createObjectURL(artworkFile), artworkFile);
+    else setStageImage(current?.artwork ?? null);
   });
 
   function clampRect(r) {
@@ -973,6 +1007,7 @@
 
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
+    if (artworkPending) return toast("Wait for the artwork preview to finish loading.", true);
     if (!current && !artworkFile) return toast("Upload the theme artwork first", true);
     const fd = new FormData();
     for (const k of ["name", "slug", "subtitle", "bg", "ink", "gold", "accent"]) fd.append(k, form.elements.namedItem(k).value);

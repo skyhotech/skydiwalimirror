@@ -2306,6 +2306,20 @@ body {
 .inline-product-workspace .camera-status {
   top: 50px;
 }
+.poster-product-overlay {
+  position: absolute;
+  inset: 0;
+  container-type: size;
+  pointer-events: none;
+}
+.poster-product-coordinates {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  translate: -50% -50%;
+  width: min(100cqw, 80cqh);
+  height: min(100cqh, 125cqw);
+}
 .inline-product-hint {
   position: absolute;
   z-index: 4;
