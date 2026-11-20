@@ -1535,17 +1535,23 @@
     if (!entries.length) return `<p class="hint">No steps yet.</p>`;
     return `<ol class="customer-journey">${entries.map((entry) => `<li><b>${esc(EVENTS[entry.kind] || entry.kind)}${entry.count > 1 ? ` ×${entry.count}` : ""}</b> <time datetime="${esc(entry.timestamp)}">${esc(entry.date)}</time></li>`).join("")}</ol>`;
   }
+  function customerInvoiceLink(c) {
+    return c.invoice_image ? `<a class="btn" href="/api/admin/customers/${encodeURIComponent(c.id)}/invoice-pdf/" target="_blank" rel="noopener">View invoice PDF</a>` : "";
+  }
   async function customerDetail(id) {
     const c = await api(`customers/${id}/`);
     const row = (k, v) => `<tr><th style="text-align:left;padding:4px 12px 4px 0">${k}</th><td>${esc(v ?? "—")}</td></tr>`;
-    const pics = [["Invoice", c.invoice_image], ["Selfie", c.selfie], ["Poster", c.poster]].filter((p) => p[1]);
+    const pics = [["Selfie", c.selfie], ["Poster", c.poster]].filter((p) => p[1]);
     const d = document.createElement("dialog");
     d.style.cssText = "max-width:640px;width:calc(100% - 32px);border:0;border-radius:12px";
     d.innerHTML = `<div class="toolbar"><b>${esc(c.name || c.phone)}</b><button class="btn">Close</button></div>
+      <section aria-label="Invoice" style="margin:0 0 16px">
+        <div class="row" style="justify-content:space-between;flex-wrap:wrap"><b>Invoice${c.invoice_number ? " " + esc(c.invoice_number) : ""}</b>${customerInvoiceLink(c)}</div>
+        ${c.invoice_image ? `<a href="/api/admin/customers/${encodeURIComponent(c.id)}/invoice-pdf/" target="_blank" rel="noopener" aria-label="Open invoice PDF"><img src="${esc(c.invoice_image)}" alt="Invoice preview" style="display:block;max-width:100%;max-height:240px;margin-top:8px;border-radius:8px"></a>` : `<p class="hint">No invoice file saved for this customer.</p>`}
+      </section>
       <table>${row("Phone", c.phone)}${row("Mail", c.email)}${row("Branch", c.branch_name)}${row("Product", c.product_details)}${row("IMEI", c.imei)}${row("Invoice no.", c.invoice_number)}${row("Bill value", c.bill_value)}${row("Reward", c.reward)}${row("Rating", c.rating ? c.rating + " / 5" : "")}${row("Terms accepted", c.terms_accepted_at ? new Date(c.terms_accepted_at).toLocaleString() : "Not yet")}${row("Video review", c.video_review ? "Yes, will make one" : "No")}${row("Instagram", c.instagram_id ? "@" + c.instagram_id : "")}${row("Reward checks", c.progress ? `Post link ${c.progress.instagram_post ? "✓" : "✕"} · Follow ${c.progress.instagram_follow || "✕"} · WhatsApp ${c.progress.whatsapp_status || "✕"} · Google review ${c.progress.google_review_opened ? "opened" : "—"}${c.progress.ready ? " → 🎁 ready" : ""}` : "")}${row("Facebook", c.facebook_profile)}${row("Review", c.review)}${row("Mirror", c.mirror_name)}${row("Photo sharpness", c.blur_score)}${row("Link", c.link)}${row("Link version", c.link_version)}</table>
       <div class="row" style="flex-wrap:wrap;gap:8px;margin:12px 0">${pics.map(([n, u]) => `<a href="${esc(u)}" target="_blank" rel="noopener"><img src="${esc(u)}" alt="${n}" style="height:160px;border-radius:8px"></a>`).join("")}</div>
       ${c.posts && c.posts.length ? `<b>Posts (proof submitted)</b><ul>${c.posts.map((p) => `<li>${esc(p.platform)}: <a href="${esc(p.url)}" target="_blank" rel="noopener">${esc(p.url)}</a></li>`).join("")}</ul>` : ""}
-      ${c.invoice_image ? `<p><a class="btn" href="/api/admin/customers/${c.id}/invoice-pdf/" target="_blank" rel="noopener">View PDF</a></p>` : ""}
       <b>Journey</b>${journeyTrack(c.events)}
       <details><summary>Text read from invoice</summary><pre style="white-space:pre-wrap">${esc(c.ocr_text)}</pre></details>`;
     $("button", d).addEventListener("click", () => d.close());
@@ -1581,7 +1587,7 @@
           <dt>Date</dt><dd>${new Date(c.created_at).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" })}</dd>
         </dl>
       </div>
-      <div class="acts"><button class="details primary">Details</button>${c.poster ? `<a class="btn" href="${esc(c.poster)}" download>Poster</a>` : ""}
+      <div class="acts"><button class="details primary">Details</button>${customerInvoiceLink(c)}${c.poster ? `<a class="btn" href="${esc(c.poster)}" download>Poster</a>` : ""}
         ${c.selfie ? `<a class="btn" href="${esc(c.selfie)}" download>Selfie</a>` : ""}
         <button class="danger">Delete</button></div>`;
     $("button.details", el).addEventListener("click", () => customerDetail(c.id).catch((e) => toast(e.message, true)));
